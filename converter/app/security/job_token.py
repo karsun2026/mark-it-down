@@ -92,14 +92,31 @@ def _sign(payload_b64: str, secret: bytes) -> str:
     return _b64encode(digest)
 
 
+def serialize_claims(claims: JobClaims) -> bytes:
+    """Canonical claim serialisation, shared with the TypeScript minter.
+
+    `ensure_ascii=False` matters: the frontend mints tokens with
+    `JSON.stringify`, which emits non-ASCII characters raw. Escaping them here
+    would produce different bytes for the same claims, so a token minted on one
+    side could not be reproduced on the other.
+
+    Verification does not depend on this — `verify_job_token` signs the
+    base64 payload string exactly as received rather than re-serialising — but
+    keeping the two minters byte-identical is what makes the wire format
+    testable across languages. See `tests/converter/test_job_token.py`.
+    """
+    return json.dumps(
+        claims.to_payload(),
+        separators=(",", ":"),
+        sort_keys=True,
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
 def mint_job_token(claims: JobClaims, secret: bytes | None = None) -> str:
     """Create a signed token. Used by tests and by any server-side caller."""
     key = secret if secret is not None else signing_secret()
-    payload_b64 = _b64encode(
-        json.dumps(
-            claims.to_payload(), separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
-    )
+    payload_b64 = _b64encode(serialize_claims(claims))
     return f"{payload_b64}.{_sign(payload_b64, key)}"
 
 
