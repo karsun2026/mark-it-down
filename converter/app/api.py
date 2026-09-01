@@ -19,9 +19,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.errors import ConversionError, ErrorCode
+from app.models import ConvertRequest, ConvertResponse
+from app.services.job_runner import run_job
 from app.services.workspace import log_startup_capacity, probe_disk
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,19 @@ async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResp
 @app.get("/converter/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/converter/v1/convert", response_model=ConvertResponse)
+async def convert(request: ConvertRequest) -> ConvertResponse:
+    """Convert one document (§17, §18).
+
+    The body carries only a job token and presigned URLs; the document itself
+    never passes through this endpoint, and neither does the result.
+
+    The work is blocking and CPU/disk bound, so it runs on a worker thread
+    rather than occupying the event loop for up to 690 seconds.
+    """
+    return await run_in_threadpool(run_job, request)
 
 
 @app.get("/converter/ready")

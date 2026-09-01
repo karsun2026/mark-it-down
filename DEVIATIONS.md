@@ -67,3 +67,48 @@ count, and image XObject extraction.
 **Intent preserved:** PyMuPDF and PyMuPDF4LLM remain excluded. Both added libraries are
 permissively licensed, so §51's no-AGPL rule still holds. No AI is involved; extraction
 stays fully deterministic.
+
+---
+
+## D-004 — Presigned client uploads instead of `handleUpload`
+
+**Spec:** §12 "Use the current `@vercel/blob/client` upload mechanism";
+§13 issues a client upload token.
+
+**Finding:** Vercel's current SDK offers two client-upload flows. The older one
+(`handleUpload` + `upload`) mints a single-use client token that travels as a
+bearer credential. The newer presigned flow (`handleUploadPresigned` +
+`uploadPresigned`) returns presigned `PUT` URLs instead, so no Vercel-managed
+bearer token is in flight at all, and the size and content-type constraints are
+enforced at the CDN rather than only at token-issue time.
+
+**Resolution:** Use the presigned flow. It satisfies §12's "current mechanism"
+instruction, and better matches §13's requirement to restrict content type and
+maximum size in the token itself.
+
+Requires `BLOB_WEBHOOK_PUBLIC_KEY` in the project environment so the
+upload-completed callback signature can be verified.
+
+**Intent preserved:** the browser still uploads directly to Private Blob; no
+store credential ever reaches the client.
+
+---
+
+## D-005 — Status reads must bypass the CDN cache
+
+**Context:** implementation detail of D-002, recorded because getting it wrong
+produces a bug that looks like the converter hanging.
+
+Presigned `GET` URLs are served through Vercel's CDN cache. When a blob is
+overwritten at the same pathname, the cache can serve the previous body for up
+to 60 seconds. The D-002 status object is overwritten at every stage, so a
+normally-presigned status URL would return stale stages and make polling
+useless — a completed job could appear stuck for a minute.
+
+**Resolution:** status URLs are presigned with `useCache: false`, which appends
+`cache=0` so reads come from origin storage. The status `PUT` URL is presigned
+with `allowOverwrite: true` and `addRandomSuffix: false`, since the same
+pathname is rewritten repeatedly.
+
+The result ZIP download URL keeps normal caching: it is written once and never
+overwritten.
