@@ -1,0 +1,11 @@
+# This project has an LF output contract (ENGINEERING_SPEC.md §37). Keep the
+# working tree LF too, so tests asserting on line endings behave identically
+# on Windows and Linux.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.zip binary

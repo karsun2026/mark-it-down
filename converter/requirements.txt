@@ -1,0 +1,25 @@
+# Runtime dependencies for the Mark-it-Down converter service.
+#
+# Pinned to versions verified to install as PREBUILT WHEELS on CPython 3.14
+# (scripts/verify_env.py). Every pip invocation in this project runs with
+# only-binary=:all: - see .venv/pip.ini for why that is non-negotiable.
+#
+# No AI SDKs. No AGPL runtime dependencies. See THIRD_PARTY_NOTICES.md.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+httpx==0.28.1
+pydantic==2.13.5
+
+# DOCX -> Pandoc subprocess (system package, installed in Dockerfile.vercel)
+
+# PPTX -> python-pptx
+python-pptx==1.0.2
+
+# PDF -> pypdf for structure/encryption/page count/image XObjects,
+#        pdfplumber for text layout + tables (see DEVIATIONS.md D-003)
+pypdf[crypto]==6.16.2
+pdfplumber==0.11.10
+
+# Required by pypdf to decode extracted image XObjects
+Pillow==12.3.0

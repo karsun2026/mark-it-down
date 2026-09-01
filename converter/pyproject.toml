@@ -1,0 +1,25 @@
+[project]
+name = "mark-it-down-converter"
+version = "0.1.0"
+description = "Deterministic DOCX/PPTX/PDF to Markdown converter. No AI."
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["../tests/converter"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "SLF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately exercise private helpers directly: the media-path
+# normalisation and the scanned-page heuristic are the parts most likely to
+# regress, and testing them only through a full conversion would hide which
+# step broke.
+"../tests/**" = ["SLF001"]

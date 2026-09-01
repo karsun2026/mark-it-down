@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env*.local
+
+# Vercel
+.vercel/
+
+# Local scratch
+/tmp/
+/converter/.tmp/
+tests/converter/fixtures/generated/
+.pytest_cache/

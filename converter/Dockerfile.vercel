@@ -1,0 +1,34 @@
+# Converter service image (ENGINEERING_SPEC.md §48).
+#
+# Python 3.14 matches the interpreter the dependency pins were verified against
+# (converter/scripts/verify_env.py); the spec suggested 3.12, but testing on a
+# different interpreter than we ship is a fidelity gap worth closing.
+#
+# Pandoc is a SYSTEM package - it is the DOCX path (§33) and its presence in
+# this image is a release blocker under §70.
+FROM python:3.14-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_ONLY_BINARY=:all:
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pandoc \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY main.py ./
+COPY app ./app
+
+# Run unprivileged (§48). /tmp stays writable for the job workspace.
+RUN useradd --create-home --uid 10001 converter \
+    && chown -R converter:converter /app
+USER converter
+
+EXPOSE 80
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-80}"]
