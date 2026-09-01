@@ -126,9 +126,21 @@ class JobWorkspace:
     on failure, so a crashed job cannot strand bytes on a shared disk.
     """
 
-    def __init__(self, job_id: str, reservation_bytes: int | None = None) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        reservation_bytes: int | None = None,
+        root_override: Path | None = None,
+    ) -> None:
         self.job_id = job_id
-        self.root = (settings.workspace_root / job_id).resolve()
+        # `root_override` lets a child process (A1.6) attach to the workspace
+        # the parent already created and budgeted, without re-reserving it and
+        # without depending on the child re-reading the same environment.
+        self.root = (
+            root_override.resolve()
+            if root_override is not None
+            else (settings.workspace_root / job_id).resolve()
+        )
         self._reservation = (
             reservation_bytes
             if reservation_bytes is not None

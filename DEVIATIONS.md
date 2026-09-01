@@ -112,3 +112,143 @@ pathname is rewritten repeatedly.
 
 The result ZIP download URL keeps normal caching: it is written once and never
 overwritten.
+
+---
+
+# Deviations from ENGINEERING_SPEC_AMENDMENT_01.md
+
+Amendment A11 requires that an unworkable A1–A2 requirement be reported with
+what was attempted, rather than silently worked around. This section is that
+report.
+
+## D-006 — A1 PPTX engine swap declined; `pptx2md` not adopted
+
+**Amendment:** A1 replaces the hand-rolled `PptxConverter` with `pptx2md`.
+
+**Decision:** declined by the owner on 2026-09-01. The existing converter is
+retained. Everything else in A1 that does not depend on the swap is adopted
+(see D-007, D-008).
+
+**A1.1's rationale does not apply to the current build state.** It argues that
+"writing this a second time adds maintenance cost and defect surface for no
+gain." The converter was completed in Phase 1 (`aaaa279`): 260 lines,
+12 passing tests, satisfying every row of A1.1's own comparison table —
+headings, nested bullets, GFM tables, extracted media with relative links,
+slide delimiters, top-then-left reading order, recursive group traversal, and
+warnings instead of failures. A1.7 anticipates this case and directs that
+existing work not be deleted.
+
+**Measured findings that changed the trade (verified, not estimated):**
+
+1. **151 MB of dependencies for a disabled feature.** `pptx2md` is 1 MB but
+   requires `scipy` (116 MB) and `numpy` (35 MB); total site-packages 252 MB.
+   Both are imported in exactly one module, `multi_column.py`, implementing
+   `try_multi_column` — which A1.3 mandates setting to `False`. The import is
+   top-level at `parser.py:30`, so it is unavoidable: importing `pptx2md`
+   loads scipy and numpy regardless of configuration. A3 defers Docling partly
+   on container-inflation grounds; the same standard excludes this.
+
+2. **Licence metadata is self-contradictory.** A1.2 states Apache-2.0. The
+   repository `LICENSE` is Apache-2.0, but the **PyPI package metadata
+   declares "MIT Licence"**. Automated licence scanners read PyPI metadata, so
+   a §51 review would report a different licence than A7.3 records. Both are
+   permissive and neither blocks adoption, but the discrepancy must be
+   resolved in writing before any §51 submission.
+
+3. **The required adapters exceed the code they replace.** A1.4 (rewrite
+   headings, rename all media, rewrite links), A1.5 (retain `python-pptx` and
+   re-parse the whole presentation because the library exposes no structured
+   warnings) and A1.6 (child-process harness) together mean parsing each
+   document twice and post-processing generated Markdown, to replace a single
+   pass that emits conforming output directly. Net maintenance increases.
+
+4. **Media de-duplication would regress.** The current `MediaWriter`
+   content-addresses images, storing one copy of a logo repeated across
+   slides. A1.4's mandated `media/slide-NNN-image-NNN` scheme is
+   per-occurrence and reintroduces duplication, pressing on the §22 180 MB
+   output ceiling that A2.3 is otherwise careful to protect. A1 does not
+   mention de-duplication.
+
+**Secondary observations, not blocking:**
+
+- A1.4 makes an unreferenced file in `media/` a hard `CONVERSION_FAILED`. For
+  a third-party library whose extraction behaviour we do not control, a
+  warning is the better contract.
+- A1.7 requires the retained `native` engine to satisfy every new A8
+  assertion while also stating it must not be extended. Those cannot both
+  hold.
+- `pptx2md` **does** resolve wheels-only on Python 3.14, so it would not have
+  triggered the source-build failure recorded in the README.
+
+**Stale facts in the amendment:** A1.2 states the container is
+`python:3.12-slim` (it is `3.14-slim`); A1.6 cites
+`MAX_LOCAL_CONCURRENT_CONVERSIONS=2` (D-001 set it to 1 with a global disk
+budget). A0.2's re-run burden is nil: §57 has not yet been run, so this lands
+before the near-100 MB test rather than invalidating it.
+
+**Revisit triggers.** Reconsider `pptx2md` if PPTX fidelity becomes the
+dominant complaint in real use, if the 151 MB dependency chain becomes
+irrelevant (a slimmer release, or optional scipy), or if maintaining the
+converter proves costlier than expected.
+
+## D-007 — Amendment adopted except the engine swap
+
+The following amendment requirements are **implemented** against the retained
+converters, since none of them depends on `pptx2md`:
+
+- **A1.6 killable timeout.** The amendment identifies this as the one real
+  regression the swap would introduce. It was in fact already a defect in the
+  Phase 1 code: `PptxConverter` and `PdfConverter` are libraries running
+  in-process and cannot be interrupted the way the Pandoc subprocess can. Both
+  now run in a spawned child process with a wall-clock timeout, killed on
+  expiry, returning the existing `CONVERSION_TIMEOUT` code as A1.6 requires.
+  DOCX is exempt: Pandoc is already a killable subprocess with its own timeout.
+  The child runs inside the parent's semaphore slot and workspace reservation,
+  so it does not multiply the §27 concurrency ceiling.
+- **A1.5 warning taxonomy**, including connectors and WMF/EMF images, one
+  warning per class per slide.
+- **A1.3 speaker-note exclusion**, opt-in via `PPTX_INCLUDE_NOTES`. This was a
+  genuine defect: the Phase 1 converter published notes into the output.
+- **A2.3 table budgets** — `PDF_TABLE_EXTRACTION`, `PDF_TABLE_MAX_PAGES`,
+  per-page timing, and a global deadline reserve.
+- **A7.2/A7.3 notices**, with `Invocation` and `Notes` columns and the
+  evaluated-and-rejected table.
+- **A8.1 fixtures and A8.2 assertions**, including the cross-format contract.
+
+## D-008 — A2.3 per-page timeout is measured, not pre-emptive
+
+**Amendment:** A2.3 sets `PDF_TABLE_PAGE_TIMEOUT_SECONDS=5` and requires a page
+exceeding it to be skipped.
+
+**Problem:** `extract_tables()` is a single blocking library call. It cannot be
+interrupted from inside this process — which is precisely the point A1.6 makes
+for PPTX. The amendment mandates a child process for PPTX but imposes a
+per-page timeout on PDF with no comparable mechanism.
+
+**Resolution:** the per-page budget is enforced by *measuring* each page and
+discarding the tables of one that overran, plus a cumulative budget that stops
+table extraction entirely once the §26 deadline reserve is reached. The hard
+stop is the A1.6 child-process timeout, which now wraps PDF conversion as well
+as PPTX for exactly this reason.
+
+**Intent preserved:** tables remain the degradable feature; text and images are
+never skipped, and no table failure changes `conversion_status` from
+`success`.
+
+## D-009 — PDF text extraction stays on pdfplumber
+
+**Amendment:** A2.2 assigns per-page text extraction to `pypdf` and gives
+`pdfplumber` only table detection.
+
+**Problem:** `pypdf.extract_text` has no layout awareness and degrades on
+multi-column and irregularly spaced pages — the same weakness A2.1 cites as its
+reason for adding table extraction. Adopting the split would fix tables while
+regressing ordinary text.
+
+**Resolution:** `pdfplumber` extracts both text and tables; `pypdf` retains
+page count, encryption detection and image XObjects. This matches the
+already-approved D-003 split.
+
+**Intent preserved:** the library division still confines each tool to what it
+does best, no AGPL dependency is introduced, and §35's prohibition on
+rewriting or summarising text is untouched.

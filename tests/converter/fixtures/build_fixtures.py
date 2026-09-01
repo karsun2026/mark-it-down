@@ -289,6 +289,138 @@ def build_encrypted_office() -> None:
     (OUTPUT_DIR / "encrypted.docx").write_bytes(cfb_magic + b"\x00" * 512)
 
 
+
+# -- Amendment A8.1 additions ----------------------------------------------
+
+
+def build_pptx_charts() -> None:
+    """A native chart, which cannot be represented in Markdown (A1.5)."""
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(_titled_layout(presentation))
+    slide.shapes.title.text = "Revenue by Region"
+
+    data = CategoryChartData()
+    data.categories = ["North", "South", "East"]
+    data.add_series("FY26", (120.0, 98.0, 143.0))
+    slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        PptxInches(1),
+        PptxInches(2),
+        PptxInches(6),
+        PptxInches(4),
+        data,
+    )
+    presentation.save(OUTPUT_DIR / "charts.pptx")
+
+
+def build_pptx_speaker_notes() -> None:
+    """Notes must NOT appear in output unless PPTX_INCLUDE_NOTES is set."""
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(_titled_layout(presentation))
+    slide.shapes.title.text = "Public Title"
+    box = slide.shapes.add_textbox(
+        PptxInches(1), PptxInches(2), PptxInches(6), PptxInches(1)
+    )
+    box.text_frame.text = "Body text that should appear."
+    slide.notes_slide.notes_text_frame.text = (
+        "CONFIDENTIAL internal commentary that must not be published."
+    )
+    presentation.save(OUTPUT_DIR / "speaker-notes.pptx")
+
+
+def build_pptx_merged_cells() -> None:
+    """A merged-cell table must still render as valid GFM."""
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(_titled_layout(presentation))
+    slide.shapes.title.text = "Merged Header"
+    shape = slide.shapes.add_table(
+        3, 3, PptxInches(1), PptxInches(2), PptxInches(7), PptxInches(2)
+    )
+    table = shape.table
+    table.cell(0, 0).merge(table.cell(0, 1))
+    table.cell(0, 0).text = "Spanning Header"
+    table.cell(0, 2).text = "Third"
+    for row in (1, 2):
+        for col in range(3):
+            table.cell(row, col).text = f"r{row}c{col}"
+    presentation.save(OUTPUT_DIR / "merged-cells.pptx")
+
+
+def build_pptx_coloured_text() -> None:
+    """Coloured runs must not produce raw HTML colour tags (A8.2)."""
+    from pptx.dml.color import RGBColor
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(_titled_layout(presentation))
+    slide.shapes.title.text = "Coloured Text"
+    box = slide.shapes.add_textbox(
+        PptxInches(1), PptxInches(2), PptxInches(6), PptxInches(2)
+    )
+    frame = box.text_frame
+    frame.text = "Red warning text"
+    frame.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xC0, 0x10, 0x10)
+    paragraph = frame.add_paragraph()
+    paragraph.text = "Green confirmation text"
+    paragraph.runs[0].font.color.rgb = RGBColor(0x10, 0xA0, 0x40)
+    presentation.save(OUTPUT_DIR / "coloured-text.pptx")
+
+
+def build_pdf_tables() -> None:
+    """Ruled table so pdfplumber has lines to detect."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=11)
+    pdf.cell(0, 10, "Segment Comparison", new_x="LMARGIN", new_y="NEXT")
+
+    rows = [
+        ["Segment", "Revenue", "Growth"],
+        ["Enterprise", "4.2m", "12%"],
+        ["Mid-market", "2.8m", "23%"],
+        ["SMB", "1.1m", "41%"],
+    ]
+    # Draw an explicitly ruled grid; borderless text is not detectable.
+    col_width = 55
+    row_height = 9
+    for row in rows:
+        for value in row:
+            pdf.cell(col_width, row_height, value, border=1)
+        pdf.ln(row_height)
+    pdf.output(str(OUTPUT_DIR / "tables.pdf"))
+
+
+def build_pdf_two_column() -> None:
+    """Documents the known multi-column reading-order limitation (A10)."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=10)
+    left = ["Left column line one.", "Left column line two.", "Left column line three."]
+    right = [
+        "Right column line one.",
+        "Right column line two.",
+        "Right column line three.",
+    ]
+    for index, (left_text, right_text) in enumerate(zip(left, right, strict=True)):
+        y = 40 + index * 8
+        pdf.set_xy(15, y)
+        pdf.cell(80, 8, left_text)
+        pdf.set_xy(110, y)
+        pdf.cell(80, 8, right_text)
+    pdf.output(str(OUTPUT_DIR / "two-column.pdf"))
+
+
+def build_pdf_many_pages() -> None:
+    """Exceeds a lowered PDF_TABLE_MAX_PAGES in tests."""
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=11)
+    for page in range(1, 13):
+        pdf.add_page()
+        pdf.cell(0, 10, f"Page {page} of twelve", new_x="LMARGIN", new_y="NEXT")
+    pdf.output(str(OUTPUT_DIR / "many-pages.pdf"))
+
+
 BUILDERS = [
     build_docx_simple,
     build_docx_headings,
@@ -298,10 +430,17 @@ BUILDERS = [
     build_pptx_images,
     build_pptx_tables,
     build_pptx_grouped_shapes,
+    build_pptx_charts,
+    build_pptx_speaker_notes,
+    build_pptx_merged_cells,
+    build_pptx_coloured_text,
     build_pdf_text,
     build_pdf_multipage,
     build_pdf_images,
     build_pdf_scanned_like,
+    build_pdf_tables,
+    build_pdf_two_column,
+    build_pdf_many_pages,
     build_fake_pdf,
     build_renamed_zip,
     build_unsafe_office_archive,

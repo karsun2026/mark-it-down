@@ -57,6 +57,21 @@ class Settings:
     pandoc_timeout_seconds: int
     max_local_concurrent_conversions: int
 
+    # Amendment A1.6 - PPTX conversion runs in a killable child process with
+    # its own wall-clock timeout, because an in-process library cannot be
+    # interrupted the way the Pandoc subprocess can.
+    pptx_conversion_timeout_seconds: int
+    # Amendment A1.3 - speaker notes are excluded by default. They routinely
+    # carry internal commentary the uploader does not expect in a shared file.
+    pptx_include_notes: bool
+
+    # Amendment A2.3 - table extraction is budgeted, not unconditional.
+    pdf_table_extraction: bool
+    pdf_table_max_pages: int
+    pdf_table_page_timeout_seconds: float
+    # Deadline reserve: abandon remaining tables rather than overrun §26.
+    pdf_table_deadline_reserve_seconds: int
+
     # Filesystem
     workspace_root: Path
     pandoc_binary: str
@@ -104,6 +119,20 @@ def _load() -> Settings:
             os.environ.get("WORKSPACE_ROOT", "/tmp/doc2md")
         ).resolve(),
         pandoc_binary=os.environ.get("PANDOC_BIN", "pandoc"),
+        # A1.6 sets 600s; keep it below the §26 internal deadline so the
+        # parent still has time to clean up and report.
+        pptx_conversion_timeout_seconds=_int_env(
+            "PPTX_CONVERSION_TIMEOUT_SECONDS", min(600, conversion_timeout - 60)
+        ),
+        pptx_include_notes=_bool_env("PPTX_INCLUDE_NOTES", False),
+        pdf_table_extraction=_bool_env("PDF_TABLE_EXTRACTION", True),
+        pdf_table_max_pages=_int_env("PDF_TABLE_MAX_PAGES", 300),
+        pdf_table_page_timeout_seconds=float(
+            _int_env("PDF_TABLE_PAGE_TIMEOUT_SECONDS", 5)
+        ),
+        pdf_table_deadline_reserve_seconds=_int_env(
+            "PDF_TABLE_DEADLINE_RESERVE_SECONDS", 90
+        ),
         log_filenames=_bool_env("LOG_FILENAMES", False),
     )
 

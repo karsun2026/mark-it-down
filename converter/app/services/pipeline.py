@@ -20,17 +20,24 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.config import settings
 from app.converters.router import converter_for
 from app.security.validation import (
     SourceType,
     inspect_office_archive,
     validate_source_file,
 )
+from app.services.child_runner import run_conversion_in_child
 from app.services.packager import build_result_zip
 from app.services.report import build_report, write_report
 from app.services.workspace import JobWorkspace
 
 logger = logging.getLogger(__name__)
+
+# Engines that run as libraries in this process and therefore cannot be
+# interrupted without killing a process (Amendment A1.6). DOCX is absent
+# because Pandoc is already a killable subprocess with its own timeout.
+_CHILD_PROCESS_TYPES = frozenset({SourceType.PPTX, SourceType.PDF})
 
 
 @dataclass(frozen=True)
@@ -70,8 +77,22 @@ def run_conversion(
         )
 
     # 2. Convert.
-    converter = converter_for(source_type, workspace, output_stem)
-    result = converter.convert(source_path)
+    #
+    # Amendment A1.6: the in-process engines (PPTX, PDF) run in a killable
+    # child process with their own wall-clock timeout, because a library call
+    # cannot be interrupted the way the Pandoc subprocess can. DOCX already
+    # shells out to Pandoc with its own timeout, so it runs in-process here.
+    if source_type in _CHILD_PROCESS_TYPES:
+        result = run_conversion_in_child(
+            workspace=workspace,
+            source_path=source_path,
+            source_type=str(source_type),
+            output_stem=output_stem,
+            timeout_seconds=settings.pptx_conversion_timeout_seconds,
+        )
+    else:
+        converter = converter_for(source_type, workspace, output_stem)
+        result = converter.convert(source_path)
 
     # 3. Output quota before anything else is written.
     output_bytes = workspace.enforce_output_quota()

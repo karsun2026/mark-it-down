@@ -16,20 +16,40 @@ from typing import Any
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+from app.config import settings
 from app.converters.base import BaseConverter, ConversionResult, sniff_image_extension
 from app.errors import ConversionError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
-# Shape types we knowingly cannot represent in Markdown, mapped to the wording
-# shown to the user. Keys are MSO_SHAPE_TYPE members.
-_UNSUPPORTED_LABELS: dict[Any, str] = {
-    MSO_SHAPE_TYPE.CHART: "chart",
-    MSO_SHAPE_TYPE.DIAGRAM: "SmartArt or diagram",
-    MSO_SHAPE_TYPE.MEDIA: "audio or video",
-    MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT: "embedded object",
-    MSO_SHAPE_TYPE.LINKED_OLE_OBJECT: "linked object",
+# Amendment A1.5 warning taxonomy. One warning per distinct unsupported class
+# per slide, worded for a non-technical reader and naming the slide so the user
+# knows where to look. Keys are MSO_SHAPE_TYPE members.
+#
+# §39/§47 apply: warning text never contains document text, shape text or paths.
+_UNSUPPORTED_WARNINGS: dict[Any, str] = {
+    MSO_SHAPE_TYPE.CHART: "Slide {n} contains a chart. Chart data is not converted.",
+    MSO_SHAPE_TYPE.DIAGRAM: (
+        "Slide {n} contains SmartArt. SmartArt is not converted."
+    ),
+    MSO_SHAPE_TYPE.MEDIA: (
+        "Slide {n} contains embedded media. Media is not converted."
+    ),
+    MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT: (
+        "Slide {n} contains an embedded object. It is not converted."
+    ),
+    MSO_SHAPE_TYPE.LINKED_OLE_OBJECT: (
+        "Slide {n} contains a linked object. It is not converted."
+    ),
+    MSO_SHAPE_TYPE.LINE: (
+        "Slide {n} contains connectors or diagram lines. Spatial relationships "
+        "may be lost."
+    ),
 }
+
+# Vector image formats we deliberately leave untouched. Converting WMF needs an
+# extra native dependency (A7.1 prohibits `wand`), so these warn instead.
+_UNCONVERTED_IMAGE_EXTENSIONS = frozenset({"wmf", "emf"})
 
 
 # Alt text that is really just the source image's filename, which tools set by
@@ -104,9 +124,13 @@ class PptxConverter(BaseConverter):
                 continue
             blocks.extend(self._convert_shape(shape, index))
 
-        notes = self._slide_notes(slide)
-        if notes:
-            blocks.append(f"**Speaker notes:** {notes}")
+        # A1.3: speaker notes are excluded by default. They routinely carry
+        # internal commentary the uploader does not expect to appear in a file
+        # they then share, so inclusion is opt-in rather than the default.
+        if settings.pptx_include_notes:
+            notes = self._slide_notes(slide)
+            if notes:
+                blocks.append(f"**Speaker notes:** {notes}")
 
         return blocks
 
@@ -160,11 +184,9 @@ class PptxConverter(BaseConverter):
         if shape_type == MSO_SHAPE_TYPE.PICTURE:
             return self._convert_picture(shape, slide_index)
 
-        if shape_type in _UNSUPPORTED_LABELS:
-            self.warn(
-                f"Slide {slide_index} contains a "
-                f"{_UNSUPPORTED_LABELS[shape_type]} that could not be converted."
-            )
+        if shape_type in _UNSUPPORTED_WARNINGS:
+            # `warn` de-duplicates, giving A1.5's one-per-class-per-slide rule.
+            self.warn(_UNSUPPORTED_WARNINGS[shape_type].format(n=slide_index))
             return []
 
         if getattr(shape, "has_text_frame", False):
@@ -227,6 +249,16 @@ class PptxConverter(BaseConverter):
                 "extracted."
             )
             logger.info("pptx image extraction failed: %s", type(exc).__name__)
+            return []
+
+        # A1.5: vector metafiles are left unconverted by design rather than
+        # pulling in a native conversion dependency.
+        image_ext = str(getattr(image, "ext", "") or "").lower().lstrip(".")
+        if image_ext in _UNCONVERTED_IMAGE_EXTENSIONS:
+            self.warn(
+                f"Slide {slide_index} contains a {image_ext.upper()} image. "
+                "It was left unconverted."
+            )
             return []
 
         extension = sniff_image_extension(

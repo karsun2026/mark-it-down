@@ -13,7 +13,9 @@ order, or summarised - there is no model in this path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from typing import Any
 import pdfplumber
 import pypdf
 
+from app.config import settings
 from app.converters.base import BaseConverter, ConversionResult, sniff_image_extension
 from app.errors import ConversionError, ErrorCode
 
@@ -120,9 +123,32 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
 class PdfConverter(BaseConverter):
     source_label = "pdf"
 
+    # A2.3 table budget state, reset per document in convert().
+    _tables_enabled: bool = True
+    _table_seconds_used: float = 0.0
+    _table_budget_seconds: float = 0.0
+
     def convert(self, source_path: Path) -> ConversionResult:
         reader = self._open_reader(source_path)
         page_count = len(reader.pages)
+
+        # A2.3 budgets, established once per document.
+        self._table_seconds_used = 0.0
+        self._table_budget_seconds = float(
+            max(
+                0,
+                settings.conversion_timeout_seconds
+                - settings.pdf_table_deadline_reserve_seconds,
+            )
+        )
+        self._tables_enabled = settings.pdf_table_extraction
+
+        if self._tables_enabled and page_count > settings.pdf_table_max_pages:
+            self._tables_enabled = False
+            self.warn(
+                "Table extraction was skipped because the document exceeds "
+                "the page budget."
+            )
 
         blocks: list[str] = []
         # Open the document once. Opening per page would reparse the whole file
@@ -210,28 +236,74 @@ class PdfConverter(BaseConverter):
         try:
             page = document.pages[index]
             raw_text = page.extract_text() or ""
-            raw_tables = page.extract_tables() or []
             coverage = _image_coverage(page)
-            # pdfplumber caches per-page layout objects; release them so peak
-            # memory stays flat across a long document.
-            page.flush_cache()
         except Exception as exc:  # noqa: BLE001 - continue with what we have
-            self.warn(
-                f"Page {index + 1} text could not be fully extracted."
-            )
+            self.warn(f"Page {index + 1} text could not be fully extracted.")
             logger.info("pdfplumber failed on page: %s", type(exc).__name__)
             return PageExtract(text="", tables=[], image_coverage=0.0)
 
-        tables = [
-            markdown
-            for markdown in (_table_to_markdown(table) for table in raw_tables)
-            if markdown
-        ]
+        # A2.3: tables are the degradable feature. Text and images are never
+        # skipped, so table extraction is attempted only within budget and
+        # anything that goes wrong warns instead of failing the job.
+        tables = self._extract_tables_within_budget(page, index)
+
+        # pdfplumber caches per-page layout objects; release them so peak
+        # memory stays flat across a long document. Best effort: a failure to
+        # release cache must not fail a conversion that already succeeded.
+        with contextlib.suppress(Exception):
+            page.flush_cache()
+
         return PageExtract(
             text=_clean_text(raw_text),
             tables=tables,
             image_coverage=coverage,
         )
+
+    def _extract_tables_within_budget(self, page: Any, index: int) -> list[str]:
+        """Extract tables from one page, honouring the A2.3 budgets.
+
+        Note on the per-page timeout: `extract_tables()` is a single blocking
+        call, so it cannot be pre-empted from inside this process. The budget
+        is therefore enforced by MEASURING each page and discarding the result
+        of one that overran, rather than by interrupting it. The hard stop is
+        the A1.6 child-process timeout wrapping the whole conversion.
+        """
+        if not self._tables_enabled:
+            return []
+
+        number = index + 1
+        started = time.perf_counter()
+        try:
+            raw_tables = page.extract_tables() or []
+        except Exception as exc:  # noqa: BLE001 - never fail a job for a table
+            self.warn(f"Page {number} tables could not be extracted.")
+            logger.info("table extraction failed: %s", type(exc).__name__)
+            return []
+
+        elapsed = time.perf_counter() - started
+        self._table_seconds_used += elapsed
+
+        if elapsed > settings.pdf_table_page_timeout_seconds:
+            self.warn(
+                f"Table extraction on page {number} exceeded its time budget "
+                "and was skipped."
+            )
+            return []
+
+        if self._table_seconds_used > self._table_budget_seconds:
+            # Stop spending the §26 deadline on a degradable feature.
+            self._tables_enabled = False
+            self.warn(
+                "Table extraction was stopped early to stay within the "
+                "conversion time limit."
+            )
+            return []
+
+        return [
+            markdown
+            for markdown in (_table_to_markdown(table) for table in raw_tables)
+            if markdown
+        ]
 
     def _extract_images(self, reader: pypdf.PdfReader, index: int) -> list[str]:
         number = index + 1
