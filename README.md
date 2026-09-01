@@ -16,20 +16,24 @@ always produces the same Markdown.
 - **Storage:** temporary Private Vercel Blob only, automatically deleted
 
 `ENGINEERING_SPEC.md` is the source of truth for the build.
-`DEVIATIONS.md` records the three approved departures from it.
+`DEVIATIONS.md` records the five documented departures from it.
 
 ## Status
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Converter core, validation, packaging, tests | **Complete** |
-| 2 | Private Blob data path, job tokens, signed URLs | Not started |
-| 3 | Web UI | Not started |
+| 2 | Private Blob data path, job tokens, signed URLs | **Complete** |
+| 3 | Web UI | **Complete** |
 | 4 | 100 MB hardening, near-limit release test | Not started |
 | 5 | Auth, rate limiting, cron cleanup, deployment | Not started |
 
-Phase 1 is local and network-free by design, so the whole conversion core is
-testable without Vercel, Blob credentials, or any platform dependency.
+The conversion core is local and network-free by design, so it is testable
+without Vercel, Blob credentials, or any platform dependency. The Blob layer
+is tested against a mocked store, so the whole suite runs offline.
+
+**Not production-ready.** §70 makes the near-100 MB test a release blocker and
+it has not been run. Auth and rate limiting are Phase 5.
 
 ## Why the architecture looks like this
 
@@ -47,7 +51,7 @@ verified against Vercel's current documented limits.
 
 ## Local development
 
-Requires Python 3.14 and Pandoc.
+Requires Python 3.14, Node 24 and Pandoc.
 
 ```bash
 cd converter && py -3 -m venv .venv && ./.venv/Scripts/python.exe -m pip install --only-binary=:all: -r requirements-dev.txt
@@ -119,3 +123,21 @@ expands past the safe processing ceiling.
 See `THIRD_PARTY_NOTICES.md`. No AGPL runtime dependencies. Pandoc is
 GPL-2.0-or-later and runs as a separate process; confirm that is acceptable
 under your organisation's policy before production use.
+
+## Running the web app locally
+
+```bash
+cd frontend && npm install --ignore-scripts && npm run dev
+```
+
+`--ignore-scripts` prevents package postinstall hooks from executing anything,
+for the same reason `--only-binary=:all:` exists on the Python side.
+
+Build and test the frontend:
+
+```bash
+cd frontend && npm run typecheck && npm run test && npm run build
+```
+
+The Blob routes need a Blob store and the environment variables in
+`.env.example`; the page itself renders without them.
