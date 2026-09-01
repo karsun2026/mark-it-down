@@ -1,0 +1,204 @@
+/* §54 - accessible by construction: visible focus, sufficient contrast,
+   and no state communicated by colour alone. */
+
+:root {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --border: #dcdad4;
+  --border-strong: #b6b2a8;
+  --text: #1c1b19;
+  --text-muted: #5f5b54;
+  --accent: #1c5d3a;
+  --accent-hover: #17492e;
+  --accent-soft: #e8f1ec;
+  --danger: #96241b;
+  --danger-soft: #fbeceb;
+  --radius: 10px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --surface: #1e2024;
+    --border: #34373d;
+    --border-strong: #4c5058;
+    --text: #f0efec;
+    --text-muted: #a8a49c;
+    --accent: #6bbd8e;
+    --accent-hover: #86ceA4;
+    --accent-soft: #1d2f26;
+    --danger: #f08c83;
+    --danger-soft: #2e1c1a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 3rem 1.25rem 4rem;
+}
+
+h1 { font-size: 1.6rem; margin: 0 0 0.4rem; letter-spacing: -0.01em; }
+p  { margin: 0 0 0.75rem; }
+.muted { color: var(--text-muted); font-size: 0.9rem; }
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+/* Dropzone -------------------------------------------------------------- */
+
+.dropzone {
+  width: 100%;
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dropzone:hover { border-color: var(--accent); }
+.dropzone[data-dragging="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dropzone-title { font-weight: 600; font-size: 1.05rem; }
+
+/* Buttons --------------------------------------------------------------- */
+
+.actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1rem; }
+
+button {
+  font: inherit;
+  border-radius: 8px;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+@media (prefers-color-scheme: dark) {
+  button.primary { color: #10221a; }
+}
+
+/* File summary ---------------------------------------------------------- */
+
+.file-name { font-weight: 600; word-break: break-word; }
+
+/* Progress -------------------------------------------------------------- */
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin: 0.6rem 0 0.35rem;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms ease;
+}
+.progress-fill[data-indeterminate="true"] {
+  width: 35%;
+  animation: slide 1.4s ease-in-out infinite;
+}
+@keyframes slide {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill[data-indeterminate="true"] { animation: none; width: 100%; opacity: 0.45; }
+}
+
+/* Dialog ---------------------------------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 12, 14, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 10;
+}
+.dialog {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  max-width: 26rem;
+  width: 100%;
+}
+.dialog h2 { margin: 0 0 0.75rem; font-size: 1.15rem; }
+.dialog ul { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+
+/* Panels ---------------------------------------------------------------- */
+
+.error-panel {
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+.error-title { font-weight: 700; margin-bottom: 0.25rem; }
+
+.warnings {
+  margin-top: 1rem;
+  border-left: 3px solid var(--border-strong);
+  padding-left: 0.9rem;
+}
+.warnings ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+
+.footnote {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

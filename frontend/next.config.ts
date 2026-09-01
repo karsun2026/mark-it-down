@@ -1,5 +1,17 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === "development";
+
+/**
+ * Next's dev server needs 'unsafe-eval' for React Refresh; production does not.
+ * Without this split the dev build silently fails to hydrate — the page renders
+ * but no event handler ever fires, which looks like broken UI rather than a
+ * blocked script.
+ */
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'";
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // §45 - security headers. No document ever renders untrusted HTML, and the
@@ -20,7 +32,7 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              scriptSrc,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data:",
               // Uploads and downloads go straight to Blob storage.
