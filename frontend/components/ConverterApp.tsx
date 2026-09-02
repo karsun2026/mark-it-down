@@ -31,6 +31,18 @@ import { validateSelection } from "@/lib/filename";
 import { messageForCode } from "@/lib/messages";
 import type { ErrorCode, JobStage, UiState } from "@/lib/types";
 
+/** Report a failure so a browser-only stall is visible server-side (§47: code only). */
+function reportFailure(code: string): void {
+  void fetch("/api/trace", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ step: "flow-error", detail: code }),
+    keepalive: true,
+  }).catch(() => {
+    /* diagnostics must never break the flow */
+  });
+}
+
 /** "1m 20s elapsed", or "" for the first few seconds. */
 function formatElapsed(seconds: number): string {
   if (seconds < 3) return "";
@@ -149,9 +161,13 @@ export default function ConverterApp() {
         return;
       }
       if (caught instanceof ConversionError) {
+        reportFailure(caught.code);
         fail(caught.code, caught.message);
         return;
       }
+      reportFailure(
+        caught instanceof Error ? caught.name : "unknown",
+      );
       fail("CONVERSION_FAILED", messageForCode("CONVERSION_FAILED"));
     } finally {
       abortRef.current = null;

@@ -26,6 +26,24 @@ import {
 } from "./types";
 import { safeExtension } from "./filename";
 
+/**
+ * Report which step the client reached, so a browser-only stall is visible in
+ * the server log. Fire-and-forget: a failed trace must never affect the job.
+ *
+ * §47: step name and duration only - no filenames, URLs or document content.
+ */
+const traceStart = Date.now();
+function trace(step: string, detail = ""): void {
+  void fetch("/api/trace", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ step, detail, elapsedMs: Date.now() - traceStart }),
+    keepalive: true,
+  }).catch(() => {
+    /* diagnostics must never break the flow */
+  });
+}
+
 export class ConversionError extends Error {
   readonly code: ErrorCode;
 
@@ -331,11 +349,25 @@ export async function convertDocument(
 ): Promise<ConversionOutcome> {
   const paths = buildJobPaths(file.name);
 
+  trace("start", `${Math.round(file.size / 1048576)}MB`);
+  trace("upload-begin");
   await uploadSource(file, paths, signal, callbacks.onUploadProgress);
-  const job = await prepareJob(paths, file.name, signal);
-  const warnings = await runConversion(job, signal, callbacks.onStage);
-  const { downloadUrl, sizeBytes } = await requestDownloadUrl(job, signal);
+  trace("upload-done");
 
+  const job = await prepareJob(paths, file.name, signal);
+  trace("prepare-done");
+
+  const warnings = await runConversion(job, signal, (status) => {
+    trace("stage", status.stage);
+    callbacks.onStage?.(status);
+  });
+  trace("race-resolved", `${warnings.length} warnings`);
+
+  trace("download-url-begin");
+  const { downloadUrl, sizeBytes } = await requestDownloadUrl(job, signal);
+  trace("download-url-done", `${Math.round(sizeBytes / 1048576)}MB`);
+
+  trace("flow-complete");
   return {
     downloadUrl,
     filename: `${paths.displayStem}_markdown.zip`,
