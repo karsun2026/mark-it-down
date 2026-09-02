@@ -75,6 +75,7 @@ it is asked.
 | ruff | Lint | 0.15.4 | MIT | PyPI | library | — |
 | python-docx | DOCX fixture generation | 1.2.0 | MIT | PyPI | library | test fixtures only |
 | fpdf2 | PDF fixture generation | 2.8.8 | **LGPL-3.0** | PyPI | library | **Test fixtures only. Not shipped in the container** (`.dockerignore` excludes dev requirements) |
+| psutil | Memory sampling in the §57 release-test harness | 7.2.2 | BSD-3-Clause | PyPI | library | Release test only. Not shipped in the container |
 
 ## Frontend
 
