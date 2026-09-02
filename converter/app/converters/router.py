@@ -24,7 +24,8 @@ def converter_for(
     source_type: SourceType,
     workspace: JobWorkspace,
     output_stem: str,
+    include_media: bool = True,
 ) -> BaseConverter:
     """Build the converter for `source_type`."""
     converter_class = _CONVERTERS[source_type]
-    return converter_class(workspace, output_stem)
+    return converter_class(workspace, output_stem, include_media)

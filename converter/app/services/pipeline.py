@@ -22,6 +22,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.converters.router import converter_for
+from app.errors import ConversionError, ErrorCode
 from app.security.validation import (
     SourceType,
     inspect_office_archive,
@@ -29,7 +30,6 @@ from app.security.validation import (
 )
 from app.services.child_runner import run_conversion_in_child
 from app.services.packager import build_result_zip
-from app.services.report import build_report, write_report
 from app.services.workspace import JobWorkspace
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,9 @@ _CHILD_PROCESS_TYPES = frozenset({SourceType.PPTX, SourceType.PDF})
 class PipelineOutcome:
     """Everything the caller needs after a successful local conversion."""
 
-    zip_path: Path
-    zip_bytes: int
+    result_path: Path
+    result_bytes: int
+    result_content_type: str
     markdown_filename: str
     pages_or_slides: int | None
     media_count: int
@@ -60,10 +61,19 @@ def run_conversion(
     source_type: SourceType,
     output_stem: str,
     original_filename: str,
+    include_media: bool = True,
 ) -> PipelineOutcome:
-    """Convert one already-downloaded document into a packaged result ZIP."""
+    """Convert one already-downloaded document into its deliverable.
+
+    Two shapes, chosen by the user before the job starts:
+
+      * Markdown only  -> a single `.md` file, delivered as-is
+      * Markdown + media -> a `.zip` containing the `.md` and a `media/` folder
+
+    Markdown-only genuinely skips image extraction rather than doing the work
+    and discarding it, which on an image-heavy deck is most of the cost.
+    """
     started = time.perf_counter()
-    source_size = source_path.stat().st_size
 
     # 1. Real content validation, then archive safety for Office formats.
     validate_source_file(source_path, source_type)
@@ -89,9 +99,12 @@ def run_conversion(
             source_type=str(source_type),
             output_stem=output_stem,
             timeout_seconds=settings.pptx_conversion_timeout_seconds,
+            include_media=include_media,
         )
     else:
-        converter = converter_for(source_type, workspace, output_stem)
+        converter = converter_for(
+            source_type, workspace, output_stem, include_media
+        )
         result = converter.convert(source_path)
 
     # 3. Output quota before anything else is written.
@@ -99,38 +112,47 @@ def run_conversion(
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-    # 4. Report joins the output tree so it is packaged with the Markdown.
-    payload = build_report(
-        source_filename=original_filename,
-        source_type=source_type,
-        source_size_bytes=source_size,
-        markdown_filename=result.markdown_path.name,
-        result=result,
-        elapsed_ms=elapsed_ms,
-    )
-    write_report(workspace.output_dir, payload)
-
-    # 5. Drop the source before zipping to halve peak disk use (§22).
+    # 4. Drop the source before packaging to halve peak disk use (§22).
     workspace.delete_local_source()
 
-    # 6. Package and check the ZIP ceiling.
-    zip_path = build_result_zip(workspace, output_stem)
-    zip_bytes = zip_path.stat().st_size
+    # 5. Deliver.
+    #
+    # No conversion report is written. It was required by §38/§39, but in real
+    # use nobody opens it (DEVIATIONS D-014) - and a bare `.md` with a JSON
+    # file bolted alongside would force a ZIP on users who asked not to have
+    # one.
+    if include_media and result.media_count > 0:
+        result_path = build_result_zip(workspace, output_stem)
+        content_type = "application/zip"
+    else:
+        # Markdown only: hand over the file itself. No archive to unpack, and
+        # nothing for a ZIP tool to refuse.
+        result_path = result.markdown_path
+        content_type = "text/markdown; charset=utf-8"
+
+    result_bytes = result_path.stat().st_size
+    if result_bytes > settings.max_result_zip_bytes:
+        raise ConversionError(
+            ErrorCode.RESULT_TOO_LARGE,
+            internal_detail=f"result {result_bytes} > {settings.max_result_zip_bytes}",
+        )
 
     logger.info(
-        "conversion complete: type=%s output_bytes=%d zip_bytes=%d "
-        "media=%d warnings=%d elapsed_ms=%d",
+        "conversion complete: type=%s media=%s output_bytes=%d result_bytes=%d "
+        "media_files=%d warnings=%d elapsed_ms=%d",
         source_type,
+        include_media,
         output_bytes,
-        zip_bytes,
+        result_bytes,
         result.media_count,
         len(result.warnings),
         elapsed_ms,
     )
 
     return PipelineOutcome(
-        zip_path=zip_path,
-        zip_bytes=zip_bytes,
+        result_path=result_path,
+        result_bytes=result_bytes,
+        result_content_type=content_type,
         markdown_filename=result.markdown_path.name,
         pages_or_slides=result.pages_or_slides,
         media_count=result.media_count,

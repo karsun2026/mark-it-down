@@ -1,8 +1,18 @@
-"""End-to-end local pipeline tests (ENGINEERING_SPEC.md §22, §38, §39, §56)."""
+"""End-to-end local pipeline tests (§22, §38, §56; DEVIATIONS D-014, D-015).
+
+The pipeline now produces one of two deliverables, chosen by the user before
+the job starts:
+
+  * **Markdown only** — a single `.md` file, handed over as-is.
+  * **Markdown + media** — a `.zip` holding the `.md` and a `media/` folder.
+
+Markdown-only must genuinely skip image extraction, not extract and discard.
+On an image-heavy deck that work is most of the cost, and doing it anyway
+would make the user's choice cosmetic.
+"""
 
 from __future__ import annotations
 
-import json
 import zipfile
 
 import pytest
@@ -13,155 +23,174 @@ from app.services.pipeline import run_conversion
 
 @pytest.fixture
 def run(workspace, fixture_path):
-    def _run(name: str, source_type: SourceType, stem: str = "Market Study"):
+    def _run(
+        name: str,
+        source_type: SourceType,
+        stem: str = "Market Study",
+        include_media: bool = True,
+    ):
         source = workspace.source_path(f".{source_type}")
         source.write_bytes(fixture_path(name).read_bytes())
-        outcome = run_conversion(
+        return run_conversion(
             workspace=workspace,
             source_path=source,
             source_type=source_type,
             output_stem=stem,
             original_filename=name,
+            include_media=include_media,
         )
-        return outcome
 
     return _run
 
 
 class TestPipelineOrdering:
-    """§22 - the source is deleted before the ZIP is built."""
+    """§22 - the source is deleted before the deliverable is built."""
 
     def test_source_removed_before_packaging(self, run, workspace) -> None:
         run("text-only.pptx", SourceType.PPTX)
         assert not workspace.source_dir.exists()
 
-    def test_produces_result_zip(self, run) -> None:
+    def test_reports_elapsed_time(self, run) -> None:
         outcome = run("text-only.pptx", SourceType.PPTX)
-        assert outcome.zip_path.exists()
-        assert outcome.zip_bytes > 0
-        assert outcome.zip_path.name == "Market Study_markdown.zip"
+        assert outcome.elapsed_ms >= 0
 
 
-class TestPackageContents:
-    """§38 - fixed package layout, and no source document inside."""
+class TestMarkdownWithMedia:
+    """A document with images yields a ZIP."""
+
+    def test_produces_a_zip(self, run) -> None:
+        outcome = run("images.pptx", SourceType.PPTX)
+        assert outcome.result_path.suffix == ".zip"
+        assert outcome.result_content_type == "application/zip"
+        assert outcome.result_bytes > 0
 
     def test_zip_layout(self, run) -> None:
         outcome = run("images.pptx", SourceType.PPTX)
-        with zipfile.ZipFile(outcome.zip_path) as archive:
+        with zipfile.ZipFile(outcome.result_path) as archive:
             names = archive.namelist()
 
         assert "Market Study_markdown/Market Study.md" in names
-        assert "Market Study_markdown/conversion-report.json" in names
         assert any(n.startswith("Market Study_markdown/media/") for n in names)
 
-    def test_zip_excludes_source_document(self, run) -> None:
+    def test_zip_excludes_the_source_document(self, run) -> None:
         outcome = run("images.pptx", SourceType.PPTX)
-        with zipfile.ZipFile(outcome.zip_path) as archive:
+        with zipfile.ZipFile(outcome.result_path) as archive:
             names = archive.namelist()
         assert not any(n.endswith((".pptx", ".docx", ".pdf")) for n in names)
 
-    def test_zip_opens_and_members_readable(self, run) -> None:
-        outcome = run("tables.pptx", SourceType.PPTX)
-        with zipfile.ZipFile(outcome.zip_path) as archive:
+    def test_zip_carries_no_conversion_report(self, run) -> None:
+        """D-014 - the report was dropped; nobody opened it."""
+        outcome = run("images.pptx", SourceType.PPTX)
+        with zipfile.ZipFile(outcome.result_path) as archive:
+            names = archive.namelist()
+        assert not any(n.endswith("conversion-report.json") for n in names)
+
+    def test_zip_opens_and_every_member_is_valid(self, run) -> None:
+        """A ZIP the user cannot open is worse than no ZIP at all.
+
+        `testzip()` verifies every member's CRC, which is the check that
+        actually catches a corrupt archive - the magic bytes alone do not.
+        """
+        outcome = run("images.pptx", SourceType.PPTX)
+        with zipfile.ZipFile(outcome.result_path) as archive:
             assert archive.testzip() is None
             markdown = archive.read(
                 "Market Study_markdown/Market Study.md"
             ).decode("utf-8")
         assert markdown.startswith("## Slide 1")
 
-    def test_media_paths_relative_and_forward_slashed(self, run) -> None:
+    def test_media_paths_are_relative(self, run) -> None:
         outcome = run("images.pptx", SourceType.PPTX)
-        with zipfile.ZipFile(outcome.zip_path) as archive:
+        with zipfile.ZipFile(outcome.result_path) as archive:
             markdown = archive.read(
                 "Market Study_markdown/Market Study.md"
             ).decode("utf-8")
         assert "](media/" in markdown
-        assert "\\" not in markdown
         assert "](/" not in markdown
+        assert "\\" not in markdown
 
 
-class TestConversionReport:
-    """§39 - the report carries no paths, URLs, tokens or document text."""
+class TestMarkdownOnly:
+    """The user asked for Markdown; give them a Markdown file."""
 
-    def test_report_fields(self, run) -> None:
-        outcome = run("multipage.pdf", SourceType.PDF, stem="doc")
-        with zipfile.ZipFile(outcome.zip_path) as archive:
-            report = json.loads(
-                archive.read("doc_markdown/conversion-report.json")
-            )
+    def test_produces_a_bare_markdown_file(self, run) -> None:
+        outcome = run("images.pptx", SourceType.PPTX, include_media=False)
+        assert outcome.result_path.suffix == ".md"
+        assert outcome.result_content_type.startswith("text/markdown")
 
-        assert report["source_filename"] == "multipage.pdf"
-        assert report["source_type"] == "pdf"
-        assert report["source_size_bytes"] > 0
-        assert report["markdown_filename"] == "doc.md"
-        assert report["pages_or_slides"] == 3
-        assert report["conversion_status"] == "success"
-        assert report["elapsed_ms"] >= 0
+    def test_the_file_is_readable_markdown(self, run) -> None:
+        outcome = run("tables.pptx", SourceType.PPTX, include_media=False)
+        text = outcome.result_path.read_text(encoding="utf-8")
+        assert text.startswith("## Slide 1")
+        assert "| Option | Cost | Risk |" in text
 
-    def test_report_states_zero_ai_tokens(self, run) -> None:
-        """§64 / §73 - the zero-AI guarantee is asserted, not assumed."""
-        outcome = run("text.pdf", SourceType.PDF, stem="doc")
-        with zipfile.ZipFile(outcome.zip_path) as archive:
-            report = json.loads(
-                archive.read("doc_markdown/conversion-report.json")
-            )
-        assert report["ai_tokens_used"] == 0
+    def test_no_images_are_written_at_all(self, run, workspace) -> None:
+        """Skipped, not extracted-then-discarded — that is the whole point."""
+        outcome = run("images.pptx", SourceType.PPTX, include_media=False)
+        assert outcome.media_count == 0
+        assert list(workspace.media_dir.glob("*")) == []
 
-    def test_report_leaks_no_paths(self, run, workspace) -> None:
-        outcome = run("text.pdf", SourceType.PDF, stem="doc")
-        with zipfile.ZipFile(outcome.zip_path) as archive:
-            raw = archive.read("doc_markdown/conversion-report.json").decode("utf-8")
+    def test_no_image_links_are_left_dangling(self, run) -> None:
+        """Markdown must not reference files that were never written."""
+        outcome = run("images.pptx", SourceType.PPTX, include_media=False)
+        text = outcome.result_path.read_text(encoding="utf-8")
+        assert "](media/" not in text
 
-        assert "/tmp" not in raw
-        assert "C:\\" not in raw
-        assert "http://" not in raw
-        assert "https://" not in raw
-        assert str(workspace.root) not in raw
+    def test_text_and_tables_survive(self, run) -> None:
+        outcome = run("tables.pptx", SourceType.PPTX, include_media=False)
+        text = outcome.result_path.read_text(encoding="utf-8")
+        assert "| Build | High | Medium |" in text
+
+    def test_pdf_markdown_only(self, run) -> None:
+        outcome = run("images.pdf", SourceType.PDF, include_media=False)
+        assert outcome.result_path.suffix == ".md"
+        assert outcome.media_count == 0
+        text = outcome.result_path.read_text(encoding="utf-8")
+        assert "Document with an embedded image" in text
+        assert "](media/" not in text
+
+    def test_a_document_with_no_images_needs_no_zip(self, run) -> None:
+        """Even in media mode, nothing to package means no archive."""
+        outcome = run("text-only.pptx", SourceType.PPTX, include_media=True)
+        assert outcome.result_path.suffix == ".md"
 
 
-class TestReportSafetyGuard:
-    """The §39 guard must actually reject unsafe values."""
+class TestOutputContract:
+    """§37 holds whichever shape is delivered."""
 
-    @pytest.mark.parametrize(
-        "bad_value",
-        [
-            "C:\\Users\\me\\secret.docx",
-            "/tmp/doc2md/abc/source/input.pdf",
-            "https://blob.example.com/signed?token=abc",
-            "Bearer eyJhbGciOi",
-        ],
-    )
-    def test_unsafe_values_rejected(self, bad_value: str) -> None:
-        from app.services.report import _assert_safe
+    @pytest.mark.parametrize("include_media", [True, False])
+    def test_markdown_is_utf8_lf_and_leaks_no_paths(
+        self, run, workspace, include_media
+    ) -> None:
+        outcome = run("images.pptx", SourceType.PPTX, include_media=include_media)
 
-        with pytest.raises(ValueError):
-            _assert_safe({"warnings": [bad_value]})
+        if outcome.result_path.suffix == ".zip":
+            with zipfile.ZipFile(outcome.result_path) as archive:
+                raw = archive.read("Market Study_markdown/Market Study.md")
+        else:
+            raw = outcome.result_path.read_bytes()
 
-    def test_safe_payload_accepted(self) -> None:
-        from app.services.report import _assert_safe
-
-        _assert_safe(
-            {
-                "source_filename": "Market Study.pdf",
-                "warnings": ["Page 4 may be scanned or image-based."],
-                "media_count": 3,
-            }
-        )
+        raw.decode("utf-8")
+        assert b"\r\n" not in raw
+        assert not raw.startswith(b"\xef\xbb\xbf")
+        text = raw.decode("utf-8")
+        assert "/tmp" not in text
+        assert "C:\\" not in text
+        assert str(workspace.root) not in text
 
 
 class TestQuotaEnforcement:
-    def test_oversized_result_rejected(self, run, workspace, monkeypatch) -> None:
+    def test_oversized_result_rejected(self, run, monkeypatch) -> None:
         import dataclasses
 
-        from app.services import packager as packager_module
+        from app.errors import ConversionError, ErrorCode
+        from app.services import pipeline as pipeline_module
 
         monkeypatch.setattr(
-            packager_module,
+            pipeline_module,
             "settings",
-            dataclasses.replace(packager_module.settings, max_result_zip_bytes=10),
+            dataclasses.replace(pipeline_module.settings, max_result_zip_bytes=10),
         )
-        from app.errors import ConversionError, ErrorCode
-
         with pytest.raises(ConversionError) as caught:
             run("images.pptx", SourceType.PPTX)
         assert caught.value.code is ErrorCode.RESULT_TOO_LARGE

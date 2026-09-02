@@ -145,6 +145,7 @@ async function prepareJob(
       resultPathname: paths.resultPathname,
       statusPathname: paths.statusPathname,
       originalFilename,
+      includeMedia: paths.includeMedia,
     }),
     signal,
   });
@@ -383,12 +384,13 @@ export async function refreshDownloadUrl(
 /** Run the whole flow for one file. */
 export async function convertDocument(
   file: File,
+  includeMedia: boolean,
   signal: AbortSignal,
   callbacks: ConversionCallbacks = {},
 ): Promise<ConversionOutcome> {
-  const paths = buildJobPaths(file.name);
+  const paths = buildJobPaths(file.name, includeMedia);
 
-  trace("start", `${Math.round(file.size / 1048576)}MB`);
+  trace("start", `${Math.round(file.size / 1048576)}MB media=${includeMedia}`);
   trace("upload-begin");
   await uploadSource(file, paths, signal, callbacks.onUploadProgress);
   trace("upload-done");
@@ -409,7 +411,9 @@ export async function convertDocument(
   trace("flow-complete");
   return {
     downloadUrl,
-    filename: `${paths.displayStem}_markdown.zip`,
+    filename: includeMedia
+      ? `${paths.displayStem}_markdown.zip`
+      : `${paths.displayStem}.md`,
     sizeBytes,
     warnings,
     jobToken: job.jobToken,

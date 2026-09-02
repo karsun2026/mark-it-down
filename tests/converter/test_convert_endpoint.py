@@ -7,7 +7,6 @@ Blob served by httpx.MockTransport. Nothing here touches the network.
 from __future__ import annotations
 
 import time
-import zipfile
 
 import httpx
 import pytest
@@ -139,17 +138,17 @@ class TestSuccessfulJob:
         assert len(response.content) < 4096
         assert b"PK\x03\x04" not in response.content
 
-    def test_result_uploaded_to_blob_as_valid_zip(self, client, blob) -> None:
-        import io
-
+    def test_result_uploaded_to_blob(self, client, blob) -> None:
+        """The fixture has no images, so the deliverable is a bare .md."""
         client.post("/converter/v1/convert", json=make_body())
         uploaded = blob["uploaded"]
         assert uploaded is not None
-
-        with zipfile.ZipFile(io.BytesIO(uploaded)) as archive:
-            names = archive.namelist()
-        assert any(n.endswith("deck.md") for n in names)
-        assert any(n.endswith("conversion-report.json") for n in names)
+        text = uploaded.decode("utf-8")
+        assert text.startswith("## Slide 1")
+        # D-014: no conversion report anywhere in the deliverable.
+        assert "conversion-report" not in text
+        # A bare .md, not an archive.
+        assert not uploaded.startswith(b"PK")
 
     def test_source_blob_deleted_after_success(self, client, blob) -> None:
         client.post("/converter/v1/convert", json=make_body())

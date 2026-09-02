@@ -56,11 +56,14 @@ export const HUMAN_TYPE_LABEL: Record<SourceType, string> = {
 /** §10 - `100 * 1024 * 1024`, stated exactly as the spec writes it. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-/** §52 - the UI state machine. */
+/**
+ * The UI state machine. §52 also listed `confirming`; that step was removed
+ * on owner feedback (DEVIATIONS D-015) - selecting a file is the intent, and
+ * the useful question is asked in place instead of behind a modal.
+ */
 export type UiState =
   | "idle"
   | "selected"
-  | "confirming"
   | "uploading"
   | "converting"
   | "preparing-download"

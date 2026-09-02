@@ -93,6 +93,7 @@ export interface JobPaths {
   statusPathname: string;
   /** Display stem, may contain Unicode. Not used for paths. */
   displayStem: string;
+  includeMedia: boolean;
 }
 
 /**
@@ -105,6 +106,7 @@ export interface JobPaths {
  */
 export function buildJobPaths(
   originalFilename: string,
+  includeMedia: boolean,
   jobId: string = crypto.randomUUID(),
 ): JobPaths {
   const extension = safeExtension(originalFilename);
@@ -113,12 +115,20 @@ export function buildJobPaths(
   const date = todayUtc();
   const prefix = `jobs/${date}/${jobId}`;
 
+  // The extension IS the instruction. The converter reads the deliverable
+  // shape from the signed result path rather than from the request body, so a
+  // caller cannot ask for one shape and be handed another.
+  const resultName = includeMedia
+    ? `${stem}_markdown.zip`
+    : `${stem}.md`;
+
   return {
     jobId,
     sourcePathname: `${prefix}/source/${stem}${extension}`,
-    resultPathname: `${prefix}/result/${stem}_markdown.zip`,
+    resultPathname: `${prefix}/result/${resultName}`,
     statusPathname: `${prefix}/status.json`,
     displayStem,
+    includeMedia,
   };
 }
 

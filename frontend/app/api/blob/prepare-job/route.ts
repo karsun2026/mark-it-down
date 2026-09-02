@@ -37,6 +37,7 @@ interface PrepareJobRequest {
   resultPathname?: unknown;
   statusPathname?: unknown;
   originalFilename?: unknown;
+  includeMedia?: unknown;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -88,6 +89,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     !resultPathname.includes("/result/")
   ) {
     return errorResponse("JOB_TOKEN_INVALID", "pathname shape unexpected");
+  }
+
+  // The deliverable shape is carried by the result path's extension, and that
+  // path is signed into the job token — so the converter reads the user's
+  // choice from something they cannot tamper with. Reject a mismatch between
+  // what was asked for and what the path says.
+  const includeMedia = body.includeMedia !== false;
+  const wantsZip = resultPathname.toLowerCase().endsWith(".zip");
+  if (includeMedia !== wantsZip) {
+    return errorResponse(
+      "JOB_TOKEN_INVALID",
+      "result extension does not match the requested output",
+    );
   }
 
   // §15 step 5.

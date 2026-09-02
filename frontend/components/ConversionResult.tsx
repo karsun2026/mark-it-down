@@ -24,7 +24,6 @@ import { formatBytes } from "@/lib/filename";
 const MAX_SHOWN_WARNINGS = 8;
 
 interface ConversionResultProps {
-  downloadUrl: string;
   filename: string;
   sizeBytes: number;
   warnings: string[];
@@ -34,7 +33,6 @@ interface ConversionResultProps {
 }
 
 export function ConversionResult({
-  downloadUrl,
   filename,
   sizeBytes,
   warnings,
@@ -42,22 +40,33 @@ export function ConversionResult({
   resultPathname,
   onReset,
 }: ConversionResultProps) {
-  const [href, setHref] = useState(downloadUrl);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
-  async function refresh() {
-    if (refreshing) return;
-    setRefreshing(true);
-    setRefreshError("");
+  /**
+   * Fetch a FRESH link, then navigate to it.
+   *
+   * Signed links live 10 minutes (§19). Handing the browser one minted
+   * earlier means a slow reader downloads an expired link's error body — the
+   * blob host answers 403 with the 10-byte text "Forbidden" and no content
+   * type, which the browser saves under the .zip name. The user then gets
+   * "the archive is corrupt" for a file that was never the archive.
+   *
+   * Minting on click means the link is always seconds old.
+   */
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    setDownloadError("");
     try {
-      setHref(await refreshDownloadUrl(jobToken, resultPathname));
+      const fresh = await refreshDownloadUrl(jobToken, resultPathname);
+      window.location.href = fresh;
     } catch {
-      setRefreshError(
-        "Could not get a new link. The file is kept for about two hours after conversion.",
+      setDownloadError(
+        "Could not prepare the download. Converted files are kept for about two hours — please try again.",
       );
     } finally {
-      setRefreshing(false);
+      setBusy(false);
     }
   }
 
@@ -69,28 +78,31 @@ export function ConversionResult({
       <div className="muted">{formatBytes(sizeBytes)}</div>
 
       <div className="actions">
-        {/* download attribute keeps the original name rather than the blob path */}
-        <a href={href} download={filename}>
-          <button type="button" className="primary">
-            Download ZIP
-          </button>
-        </a>
-        <button type="button" onClick={refresh} disabled={refreshing}>
-          {refreshing ? "Getting a new link…" : "Get a new link"}
+        {/*
+          A button, not an <a href>. The href would be a link that starts
+          ageing the moment it is rendered; this mints one per click.
+        */}
+        <button
+          type="button"
+          className="primary"
+          onClick={download}
+          disabled={busy}
+        >
+          {busy ? "Preparing…" : "Download"}
         </button>
         <button type="button" onClick={onReset}>
           Convert another file
         </button>
       </div>
 
-      {refreshError ? (
+      {downloadError ? (
         <p className="muted" role="alert" style={{ marginTop: "0.9rem" }}>
-          {refreshError}
+          {downloadError}
         </p>
       ) : (
         <p className="muted" style={{ marginTop: "0.9rem" }}>
-          The download link expires after about 10 minutes. If it stops working,
-          use <strong>Get a new link</strong> — you do not need to convert again.
+          You can download this for about two hours. Each click gets a fresh
+          link, so it will not expire on you.
         </p>
       )}
 

@@ -308,6 +308,13 @@ class PdfConverter(BaseConverter):
     def _extract_images(self, reader: pypdf.PdfReader, index: int) -> list[str]:
         number = index + 1
         blocks: list[str] = []
+
+        if not self.include_media:
+            # Markdown only: skip the XObject walk entirely. On an image-heavy
+            # PDF this is most of the work.
+            with contextlib.suppress(Exception):
+                self.skipped_media += len(reader.pages[index].images)
+            return []
         try:
             page_images = list(reader.pages[index].images)
         except Exception as exc:  # noqa: BLE001 - malformed XObject tables

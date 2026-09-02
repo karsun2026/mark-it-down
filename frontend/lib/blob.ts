@@ -75,13 +75,21 @@ export async function signSourceDelete(pathname: string): Promise<string> {
   return presignedUrl;
 }
 
-/** Signed PUT for the result ZIP. Written once, so no overwrite is allowed. */
+/**
+ * Signed PUT for the result. Written once, so no overwrite is allowed.
+ *
+ * The deliverable is a `.zip` when the user wanted media and a bare `.md`
+ * when they did not, so both content types are permitted.
+ */
 export async function signResultPut(pathname: string): Promise<string> {
+  const contentTypes = pathname.toLowerCase().endsWith(".md")
+    ? ["text/markdown; charset=utf-8", "text/markdown", "text/plain"]
+    : ["application/zip"];
   const validUntil = expiryFromNow(SIGNED_RESULT_PUT_URL_MINUTES);
   const token = await issueSignedToken({
     pathname,
     operations: ["put"],
-    allowedContentTypes: ["application/zip"],
+    allowedContentTypes: contentTypes,
     // §22 caps the result at 180 MB; leave headroom rather than a hard equal.
     maximumSizeInBytes: 200 * 1024 * 1024,
     validUntil,
@@ -90,7 +98,7 @@ export async function signResultPut(pathname: string): Promise<string> {
     operation: "put",
     pathname,
     access: ACCESS,
-    allowedContentTypes: ["application/zip"],
+    allowedContentTypes: contentTypes,
     maximumSizeInBytes: 200 * 1024 * 1024,
     addRandomSuffix: false,
     allowOverwrite: false,

@@ -99,6 +99,10 @@ def _run_guarded(
     started = time.perf_counter()
     output_stem = sanitize_filename_stem(claims.filename)
 
+    # The deliverable shape is read from the SIGNED result path, not from the
+    # request body, so a caller cannot ask for one shape and be given another.
+    include_media = not claims.result_path.lower().endswith(".md")
+
     with JobWorkspace(claims.job_id) as workspace:
         status.publish(Stage.DOWNLOADING)
 
@@ -112,10 +116,15 @@ def _run_guarded(
             source_type=source_type,
             output_stem=output_stem,
             original_filename=claims.filename,
+            include_media=include_media,
         )
 
         status.publish(Stage.UPLOADING)
-        upload_result(request.resultPutUrl, outcome.zip_path)
+        upload_result(
+            request.resultPutUrl,
+            outcome.result_path,
+            content_type=outcome.result_content_type,
+        )
 
         # 4. Source goes as soon as the result is safely stored (§40).
         if request.sourceDeleteUrl:
@@ -125,7 +134,7 @@ def _run_guarded(
 
         status.publish(
             Stage.COMPLETE,
-            result_bytes=outcome.zip_bytes,
+            result_bytes=outcome.result_bytes,
             pages_or_slides=outcome.pages_or_slides,
             media_count=outcome.media_count,
             warnings=outcome.warnings,
@@ -135,14 +144,14 @@ def _run_guarded(
             "job complete job_id=%s type=%s result_bytes=%d elapsed_ms=%d",
             claims.job_id,
             source_type,
-            outcome.zip_bytes,
+            outcome.result_bytes,
             elapsed_ms,
         )
 
         return ConvertResponse(
             jobId=claims.job_id,
             resultPathname=claims.result_path,
-            resultBytes=outcome.zip_bytes,
+            resultBytes=outcome.result_bytes,
             warnings=outcome.warnings,
             pagesOrSlides=outcome.pages_or_slides,
             mediaCount=outcome.media_count,

@@ -361,3 +361,53 @@ Two related findings from getting this working:
   `authenticate` took only the cookie - so an automated caller cleared the
   gate and was then refused by the identity check. Caught by the §57 release
   test, which is precisely what it is for.
+
+
+## D-014 - No conversion report
+
+**Spec:** §38 puts `conversion-report.json` in every output package; §39
+specifies its contents.
+
+**Owner feedback, 2026-09-02:** "there is also no need for a conversion report
+to the user because most users are not going to look into any of this."
+
+**Resolution:** the report is not written at all, and `report.py` is deleted.
+It also actively got in the way of D-015: a bare `.md` plus a JSON file would
+have forced a ZIP on users who explicitly asked not to have one.
+
+**What is kept:** warnings still reach the user, in the result panel where
+they will actually be seen. The `ai_tokens_used: 0` assertion the report
+carried is still made, on every convert response (`aiTokensUsed`), so §64's
+zero-AI acceptance criterion remains machine-checkable.
+
+## D-015 - Two output shapes, and one question instead of two clicks
+
+**Spec:** §2 has select -> confirm dialog -> convert; §38 always produces a ZIP.
+
+**Owner feedback, 2026-09-02:** most users want just the Markdown and are not
+interested in the media; the second confirmation button is unnecessary; and
+the app should warn people up front about what does not convert.
+
+**Resolution:**
+
+- The user is asked once, in place: **Markdown only** or **Markdown + images
+  (ZIP)**. Answering starts the job. The §52 `confirming` state and the modal
+  are gone - selecting a file already expresses intent, and a dialog that only
+  asks "are you sure" costs a click and teaches nothing.
+- **Markdown only genuinely skips image extraction.** It does not extract and
+  discard: on an image-heavy deck the image work is most of the time and disk
+  cost, so skipping it is the point rather than a detail.
+- **Markdown only delivers a bare `.md`.** No archive to unpack - and nothing
+  for a ZIP tool to refuse, which had already bitten one user.
+- A fidelity notice appears **before** conversion, naming charts, SmartArt,
+  diagrams and multi-column layouts. Setting expectations after a two-minute
+  wait is too late.
+
+**How the choice is made tamper-proof:** it is carried by the result path's
+extension (`.md` or `.zip`), and that path is signed into the job token (§16).
+The converter reads the shape from the signed claim, never from the request
+body, so a caller cannot ask for one shape and be handed another. `prepare-job`
+rejects a mismatch between the requested mode and the path it is asked to sign.
+
+**Intent preserved:** §38's package layout is unchanged whenever a ZIP is
+produced, and the §37 Markdown output contract holds in both shapes.

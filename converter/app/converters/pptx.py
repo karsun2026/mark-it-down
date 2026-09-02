@@ -182,6 +182,10 @@ class PptxConverter(BaseConverter):
             return self._convert_table(shape)
 
         if shape_type == MSO_SHAPE_TYPE.PICTURE:
+            if not self.include_media:
+                # Markdown only: do not decode, hash or write the image.
+                self.note_skipped_media()
+                return []
             return self._convert_picture(shape, slide_index)
 
         if shape_type in _UNSUPPORTED_WARNINGS:

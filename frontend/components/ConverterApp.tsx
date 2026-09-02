@@ -3,11 +3,16 @@
 /**
  * The single page (§2, §52, §53, §54).
  *
- * State machine, exactly as §52 defines it:
+ * State machine, simplified from §52 on owner feedback (DEVIATIONS D-015):
  *
- *   idle -> selected -> confirming -> uploading -> converting
- *        -> preparing-download -> complete
+ *   idle -> selected -> uploading -> converting -> complete
  *   (any) -> error
+ *
+ * §52 had a separate `confirming` step behind a second button. In practice
+ * choosing a file IS the intent, and a modal that only says "are you sure"
+ * costs a click and tells the user nothing. The choice that actually matters -
+ * Markdown only, or Markdown plus images - is now asked once, in place, and
+ * answering it starts the job.
  *
  * §53: an in-flight job is cancellable via AbortController. If the browser
  * disappears mid-job, the §41 cleanup cron is the backstop — nothing is left
@@ -16,7 +21,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ConfirmationDialog } from "@/components/ConfirmationDialog";
 import { ConversionResult } from "@/components/ConversionResult";
 import { ErrorPanel } from "@/components/ErrorPanel";
 import { FileDropzone } from "@/components/FileDropzone";
@@ -133,8 +137,9 @@ export default function ConverterApp() {
     [fail],
   );
 
-  const start = useCallback(async () => {
-    if (!file) return;
+  const start = useCallback(
+    async (includeMedia: boolean) => {
+      if (!file) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -147,7 +152,7 @@ export default function ConverterApp() {
     settledRef.current = false;
 
     try {
-      const result = await convertDocument(file, controller.signal, {
+      const result = await convertDocument(file, includeMedia, controller.signal, {
         onUploadProgress: (percentage) => {
           setUploadPercent(percentage);
           if (percentage >= 100) setState("converting");
@@ -181,7 +186,9 @@ export default function ConverterApp() {
     } finally {
       abortRef.current = null;
     }
-  }, [fail, file, reset]);
+    },
+    [fail, file, reset],
+  );
 
   const busy = state === "uploading" || state === "converting";
 
@@ -223,20 +230,42 @@ export default function ConverterApp() {
           </div>
         )}
 
-        {file && (state === "selected" || state === "confirming") && (
+        {file && state === "selected" && (
           <div className="card">
             <FileSummary file={file} />
+
+            <p style={{ marginTop: "1.1rem", marginBottom: "0.35rem" }}>
+              <strong>What would you like?</strong>
+            </p>
+            <p className="muted" style={{ marginBottom: "0.9rem" }}>
+              Choosing Markdown only is faster and gives you a single file.
+            </p>
+
             <div className="actions">
               <button
                 type="button"
                 className="primary"
-                onClick={() => setState("confirming")}
+                onClick={() => start(false)}
               >
-                Convert to Markdown
+                Markdown only
+              </button>
+              <button type="button" onClick={() => start(true)}>
+                Markdown + images (ZIP)
               </button>
               <button type="button" onClick={reset}>
                 Change file
               </button>
+            </div>
+
+            {/* Set expectations before the wait, not after it. */}
+            <div className="warnings" style={{ marginTop: "1.25rem" }}>
+              <strong>Before you convert</strong>
+              <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+                Text, headings, lists and tables usually convert well. Charts,
+                SmartArt, diagrams and complex layouts do not — they are left
+                out, and multi-column pages may come through in an odd order.
+                Check the result before relying on it.
+              </p>
             </div>
           </div>
         )}
@@ -273,7 +302,6 @@ export default function ConverterApp() {
 
         {state === "complete" && outcome && (
           <ConversionResult
-            downloadUrl={outcome.downloadUrl}
             filename={outcome.filename}
             sizeBytes={outcome.sizeBytes}
             warnings={outcome.warnings}
@@ -283,14 +311,6 @@ export default function ConverterApp() {
           />
         )}
       </div>
-
-      {state === "confirming" && file && (
-        <ConfirmationDialog
-          file={file}
-          onConfirm={start}
-          onCancel={() => setState("selected")}
-        />
-      )}
 
       <div className="footnote">
         <p>

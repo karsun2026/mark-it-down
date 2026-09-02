@@ -128,11 +128,25 @@ class BaseConverter(ABC):
 
     source_label: str
 
-    def __init__(self, workspace: JobWorkspace, output_stem: str) -> None:
+    def __init__(
+        self,
+        workspace: JobWorkspace,
+        output_stem: str,
+        include_media: bool = True,
+    ) -> None:
         self.workspace = workspace
         self.output_stem = output_stem
         self.warnings: list[str] = []
         self.media = MediaWriter(workspace)
+        # When the user asked for Markdown only, images are never decoded or
+        # written at all. Extracting them and then discarding them would waste
+        # the majority of the time and disk a large deck costs.
+        self.include_media = include_media
+        self.skipped_media = 0
+
+    def note_skipped_media(self) -> None:
+        """Count an image we deliberately did not extract."""
+        self.skipped_media += 1
 
     def warn(self, message: str) -> None:
         """Record a non-fatal problem.

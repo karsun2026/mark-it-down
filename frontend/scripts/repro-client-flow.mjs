@@ -18,7 +18,8 @@ import { basename } from "node:path";
 
 import { upload } from "@vercel/blob/client";
 
-const [baseUrl, filePath] = process.argv.slice(2);
+const [baseUrl, filePath, mediaArg] = process.argv.slice(2);
+const includeMedia = mediaArg !== 'no-media';
 const password = process.env.APP_PASSWORD ?? "";
 const headers = password ? { "x-app-password": password } : {};
 
@@ -34,7 +35,9 @@ function jobPaths(name) {
   return {
     jobId: id,
     sourcePathname: `jobs/${date}/${id}/source/${stem}${ext}`,
-    resultPathname: `jobs/${date}/${id}/result/${stem}_markdown.zip`,
+    resultPathname: includeMedia
+      ? `jobs/${date}/${id}/result/${stem}_markdown.zip`
+      : `jobs/${date}/${id}/result/${stem}.md`,
     statusPathname: `jobs/${date}/${id}/status.json`,
   };
 }
@@ -101,7 +104,7 @@ async function main() {
   const prepared = await fetch(new URL("/api/blob/prepare-job", baseUrl), {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify({ ...paths, originalFilename: name }),
+    body: JSON.stringify({ ...paths, originalFilename: name, includeMedia }),
   });
   const job = await prepared.json();
   log(`prepare-job HTTP ${prepared.status}`);
@@ -155,6 +158,10 @@ async function main() {
   });
   const download = await downloadResponse.json();
   log(`download-url HTTP ${downloadResponse.status} size=${download.sizeBytes}`);
+  const head = await fetch(download.downloadUrl);
+  const headBytes = new Uint8Array(await head.arrayBuffer());
+  const isZip = headBytes[0] === 0x50 && headBytes[1] === 0x4b;
+  log(`  deliverable: ${isZip ? "ZIP" : "markdown"} (${headBytes.length} bytes)`);
   log("FLOW COMPLETE");
 }
 

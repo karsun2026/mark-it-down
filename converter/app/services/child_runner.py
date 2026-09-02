@@ -44,6 +44,7 @@ class ChildRequest:
     source_path: str
     source_type: str
     output_stem: str
+    include_media: bool = True
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,10 @@ def _child_main(request: ChildRequest, result_queue) -> None:  # pragma: no cove
             root_override=Path(request.workspace_root),
         )
         converter = converter_for(
-            SourceType(request.source_type), workspace, request.output_stem
+            SourceType(request.source_type),
+            workspace,
+            request.output_stem,
+            request.include_media,
         )
         result = converter.convert(Path(request.source_path))
 
@@ -118,6 +122,7 @@ def run_conversion_in_child(
     source_type: str,
     output_stem: str,
     timeout_seconds: float,
+    include_media: bool = True,
 ) -> ConversionResult:
     """Convert in a child process, killing it if it outruns `timeout_seconds`.
 
@@ -139,6 +144,7 @@ def run_conversion_in_child(
         source_path=str(source_path),
         source_type=source_type,
         output_stem=output_stem,
+        include_media=include_media,
     )
 
     process: SpawnProcess = context.Process(
