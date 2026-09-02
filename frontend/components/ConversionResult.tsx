@@ -10,6 +10,13 @@
 
 import { formatBytes } from "@/lib/filename";
 
+/**
+ * A deck with a chart on every slide can produce hundreds of warnings. Showing
+ * them all buries the download button under a wall of text; the complete list
+ * ships in the conversion report either way.
+ */
+const MAX_SHOWN_WARNINGS = 8;
+
 interface ConversionResultProps {
   downloadUrl: string;
   filename: string;
@@ -56,12 +63,18 @@ export function ConversionResult({
               : `${warnings.length} notes about this conversion`}
           </strong>
           <ul>
-            {warnings.map((warning) => (
+            {warnings.slice(0, MAX_SHOWN_WARNINGS).map((warning) => (
               <li key={warning} className="muted">
                 {warning}
               </li>
             ))}
           </ul>
+          {warnings.length > MAX_SHOWN_WARNINGS && (
+            <p className="muted" style={{ marginTop: "0.5rem" }}>
+              …and {warnings.length - MAX_SHOWN_WARNINGS} more. The full list is
+              in <code>conversion-report.json</code> inside the ZIP.
+            </p>
+          )}
         </div>
       )}
     </div>

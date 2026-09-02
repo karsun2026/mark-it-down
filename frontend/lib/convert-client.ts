@@ -41,6 +41,17 @@ const POLL_INTERVAL_MS = 2000;
 /** Slightly beyond the converter's own 690s deadline (§26). */
 const POLL_TIMEOUT_MS = 720_000;
 
+/** The download-url call is normally ~1s; never let it hang the finished job. */
+const DOWNLOAD_URL_TIMEOUT_MS = 15_000;
+const DOWNLOAD_URL_ATTEMPTS = 3;
+
+/**
+ * Consecutive status reads that may fail before we say so. Transient blips are
+ * normal; a persistent failure previously looped in silence until the 12-minute
+ * deadline, which reads to a user as "stuck forever".
+ */
+const MAX_SILENT_POLL_FAILURES = 8;
+
 export interface ConversionCallbacks {
   onUploadProgress?: (percentage: number) => void;
   onStage?: (status: JobStatus) => void;
@@ -137,6 +148,7 @@ async function pollStatus(
 ): Promise<JobStatus> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   let lastStage = "";
+  let consecutiveFailures = 0;
 
   while (Date.now() < deadline) {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
@@ -144,17 +156,28 @@ async function pollStatus(
     try {
       const response = await fetch(statusGetUrl, { cache: "no-store", signal });
       if (response.ok) {
+        consecutiveFailures = 0;
         const status = (await response.json()) as JobStatus;
         if (status.stage !== lastStage) {
           lastStage = status.stage;
           onStage?.(status);
         }
         if (status.done) return status;
+      } else if (response.status !== 404) {
+        // A 404 simply means the converter has not written a status yet.
+        consecutiveFailures += 1;
       }
-      // A 404 simply means the converter has not written a status yet.
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
-      // Transient network trouble: keep polling until the deadline.
+      consecutiveFailures += 1;
+    }
+
+    // Say something rather than looping in silence for twelve minutes.
+    if (consecutiveFailures >= MAX_SILENT_POLL_FAILURES) {
+      throw new ConversionError(
+        "SERVICE_UNAVAILABLE",
+        "Lost contact while checking on your conversion. Please try again.",
+      );
     }
 
     await sleep(POLL_INTERVAL_MS, signal);
@@ -235,20 +258,64 @@ async function runConversion(
   }
 }
 
-/** Step 20: exchange the job token for a short-lived signed download URL. */
+/**
+ * Step 20: exchange the job token for a short-lived signed download URL.
+ *
+ * Bounded and retried. This call normally takes about a second, but when it
+ * stalled the UI sat on "Finishing up" indefinitely with no error and no way
+ * forward - the conversion had already succeeded and the user could not tell.
+ * An unbounded await on the last step of a long job is the worst place to have
+ * one.
+ */
 async function requestDownloadUrl(
   job: PrepareJobResponse,
   signal: AbortSignal,
 ): Promise<{ downloadUrl: string; sizeBytes: number }> {
-  const response = await fetch("/api/blob/download-url", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jobToken: job.jobToken,
-      resultPathname: job.resultPathname,
-    }),
-    signal,
-  });
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= DOWNLOAD_URL_ATTEMPTS; attempt += 1) {
+    try {
+      return await requestDownloadUrlOnce(job, signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      // A refusal is final; retrying it just delays the error the user needs.
+      if (error instanceof ConversionError) throw error;
+      lastError = error;
+      if (attempt < DOWNLOAD_URL_ATTEMPTS) await sleep(1000 * attempt, signal);
+    }
+  }
+
+  throw new ConversionError(
+    "SERVICE_UNAVAILABLE",
+    "Your file converted successfully, but preparing the download link timed out. Please try again.",
+  );
+}
+
+async function requestDownloadUrlOnce(
+  job: PrepareJobResponse,
+  signal: AbortSignal,
+): Promise<{ downloadUrl: string; sizeBytes: number }> {
+  // Own timeout, combined with the caller's cancel signal.
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), DOWNLOAD_URL_TIMEOUT_MS);
+  const onAbort = () => timeout.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  let response: Response;
+  try {
+    response = await fetch("/api/blob/download-url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jobToken: job.jobToken,
+        resultPathname: job.resultPathname,
+      }),
+      signal: timeout.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
 
   if (!response.ok) {
     throw await readApiError(response, "SERVICE_UNAVAILABLE");

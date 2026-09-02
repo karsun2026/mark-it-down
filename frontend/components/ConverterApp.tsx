@@ -14,7 +14,7 @@
  * stranded in storage.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ConfirmationDialog } from "@/components/ConfirmationDialog";
 import { ConversionResult } from "@/components/ConversionResult";
@@ -31,6 +31,14 @@ import { validateSelection } from "@/lib/filename";
 import { messageForCode } from "@/lib/messages";
 import type { ErrorCode, JobStage, UiState } from "@/lib/types";
 
+/** "1m 20s elapsed", or "" for the first few seconds. */
+function formatElapsed(seconds: number): string {
+  if (seconds < 3) return "";
+  if (seconds < 60) return `${seconds}s elapsed.`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s elapsed.`;
+}
+
 /** Reader-facing text per stage. Deliberately plain, never technical. */
 const STAGE_LABEL: Record<JobStage, string> = {
   accepted: "Preparing",
@@ -39,7 +47,7 @@ const STAGE_LABEL: Record<JobStage, string> = {
   converting: "Converting to Markdown",
   packaging: "Building your ZIP",
   uploading: "Saving the result",
-  complete: "Finishing up",
+  complete: "Preparing your download",
   failed: "Failed",
 };
 
@@ -53,7 +61,21 @@ export default function ConverterApp() {
     { code: ErrorCode; message: string; preflight: boolean } | null
   >(null);
 
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
   const abortRef = useRef<AbortController | null>(null);
+
+  // A visible clock. Without it "a few minutes" is a guess, and a stalled job
+  // is indistinguishable from a slow one.
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [startedAt]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -61,6 +83,8 @@ export default function ConverterApp() {
     setState("idle");
     setFile(null);
     setUploadPercent(0);
+    setStartedAt(null);
+    setElapsed(0);
     setStage(null);
     setOutcome(null);
     setError(null);
@@ -100,6 +124,8 @@ export default function ConverterApp() {
     setState("uploading");
     setUploadPercent(0);
     setStage(null);
+    setStartedAt(Date.now());
+    setElapsed(0);
 
     try {
       const result = await convertDocument(file, controller.signal, {
@@ -198,13 +224,17 @@ export default function ConverterApp() {
                 <UploadProgress
                   label="Uploading"
                   percentage={uploadPercent}
-                  detail="Your file is uploading directly to secure storage."
+                  detail={`Your file is uploading directly to secure storage. ${formatElapsed(elapsed)}`}
                 />
               ) : (
                 <UploadProgress
                   // §52 - no invented percentage for the conversion itself.
                   label={stage ? STAGE_LABEL[stage] : "Converting"}
-                  detail="Large documents can take a few minutes. You can leave this tab open."
+                  detail={
+                    stage === "complete"
+                      ? `Converted successfully — fetching your download link. ${formatElapsed(elapsed)}`
+                      : `Large documents can take a few minutes. You can leave this tab open. ${formatElapsed(elapsed)}`
+                  }
                 />
               )}
             </div>
