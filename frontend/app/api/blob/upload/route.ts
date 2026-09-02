@@ -21,6 +21,11 @@ import {
 import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
+import { authenticate, AuthNotConfiguredError } from "@/lib/auth";
+import {
+  checkConversionRateLimit,
+  warnIfDegraded,
+} from "@/lib/rate-limit";
 import {
   isSupportedExtension,
   pathBelongsToJob,
@@ -35,11 +40,15 @@ export const runtime = "nodejs";
  * expose conversion anonymously. Deployment Protection covers the gap until
  * Entra lands in Phase 5.
  */
-async function isAuthorized(_request: Request): Promise<boolean> {
-  const mode = process.env.AUTH_MODE ?? "none";
-  if (mode === "none") return true;
-  // Phase 5 wires Entra here. Fail closed for any mode we do not implement.
-  return false;
+async function isAuthorized(request: Request): Promise<boolean> {
+  try {
+    await authenticate(request);
+    return true;
+  } catch (error) {
+    // A configured-but-broken auth mode must fail closed (§43).
+    if (error instanceof AuthNotConfiguredError) return false;
+    return false;
+  }
 }
 
 /** Extract the job id from `jobs/<date>/<job-id>/...`. */
@@ -55,6 +64,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     body = (await request.json()) as HandleUploadBody;
   } catch {
     return errorResponse("INVALID_FILE_FORMAT", "upload body was not json");
+  }
+
+  // §44 - stop abuse here, before a 100 MB upload is authorised at all.
+  const rateLimit = await checkConversionRateLimit(request);
+  warnIfDegraded(rateLimit, "/api/blob/upload");
+  if (rateLimit.limited) {
+    return errorResponse("RATE_LIMITED", "conversion rate limit exceeded");
   }
 
   try {

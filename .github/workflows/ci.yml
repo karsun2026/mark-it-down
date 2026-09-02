@@ -1,0 +1,127 @@
+# CI pipeline (ENGINEERING_SPEC.md §60).
+#
+# Frontend: install, typecheck, test, build.
+# Converter: install, lint, pytest, plus DOCX/PPTX/PDF smoke conversions.
+#
+# Two gates beyond §60, because both protect constraints that are otherwise
+# only enforced by convention:
+#   * the zero-AI check (§1) greps application code for any provider or SDK;
+#   * every pip install uses --only-binary=:all:, so a dependency that has no
+#     wheel fails loudly here rather than invoking a compiler.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  converter:
+    name: Converter
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: converter
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # DOCX conversion is a Pandoc subprocess. §70 makes its presence a
+      # release blocker, so CI installs it rather than skipping those tests.
+      - name: Install Pandoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pandoc
+
+      - name: Install dependencies (wheels only)
+        run: "python -m pip install --only-binary=:all: -r requirements-dev.txt"
+
+      - name: Verify the environment resolves
+        run: python scripts/verify_env.py
+
+      - name: Lint
+        run: python -m ruff check app ../tests scripts
+
+      - name: Generate fixtures
+        run: python ../tests/converter/fixtures/build_fixtures.py
+
+      - name: Tests
+        run: python -m pytest ../tests/converter -q
+
+      # §60: "Also run small DOCX/PPTX/PDF smoke conversions."
+      - name: Smoke conversions
+        run: |
+          python scripts/smoke_pptx.py > /dev/null
+          python scripts/smoke_pdf.py > /dev/null
+          python scripts/check_encoding.py
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # --ignore-scripts: no package postinstall may execute anything.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  constraints:
+    name: Hard constraints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # §1: AI token usage must remain exactly zero. This fails the build if
+      # any AI provider, SDK or gateway is referenced from application code.
+      - name: Zero-AI check
+        run: |
+          if grep -rniE 'openai|anthropic|@ai-sdk|ai-gateway|langchain|gemini|huggingface' \
+              --include='*.py' --include='*.ts' --include='*.tsx' \
+              converter/app frontend/app frontend/lib; then
+            echo "::error::AI provider reference found in application code (§1)"
+            exit 1
+          fi
+          echo "no AI provider, SDK or gateway referenced"
+
+      # §35, §51 and Amendment A7.1: prohibited runtime dependencies.
+      - name: Prohibited dependency check
+        run: |
+          if grep -riE 'pymupdf|marker-pdf|markitdown|^docling|^wand|^torch' \
+              converter/requirements.txt; then
+            echo "::error::prohibited dependency in requirements.txt (§51, A7.1)"
+            exit 1
+          fi
+          echo "no prohibited runtime dependency"
+
+      # A secret committed here would be in Blob-access range.
+      - name: No committed secrets
+        run: |
+          if git ls-files | grep -E '^\.env$|\.env\.local|\.env\.deploy'; then
+            echo "::error::an environment file is tracked in git"
+            exit 1
+          fi
+          echo "no environment files tracked"

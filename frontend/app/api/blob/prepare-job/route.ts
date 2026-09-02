@@ -11,6 +11,10 @@ import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
 import {
+  checkConversionRateLimit,
+  warnIfDegraded,
+} from "@/lib/rate-limit";
+import {
   exceedsUploadLimit,
   inspectBlob,
   signResultPut,
@@ -35,6 +39,14 @@ interface PrepareJobRequest {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // §44 - defence in depth. A caller who skipped the upload route and is
+  // reusing an already-uploaded blob still passes through here.
+  const rateLimit = await checkConversionRateLimit(request);
+  warnIfDegraded(rateLimit, "/api/blob/prepare-job");
+  if (rateLimit.limited) {
+    return errorResponse("RATE_LIMITED", "conversion rate limit exceeded");
+  }
+
   let body: PrepareJobRequest;
   try {
     body = (await request.json()) as PrepareJobRequest;
