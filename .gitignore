@@ -36,3 +36,5 @@ tests/converter/fixtures/large/
 
 .vercel
 .env*
+frontend/public/__probe.txt
+frontend/public/__big.pptx

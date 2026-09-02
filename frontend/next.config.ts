@@ -35,8 +35,20 @@ const nextConfig: NextConfig = {
               scriptSrc,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data:",
-              // Uploads and downloads go straight to Blob storage.
-              "connect-src 'self' https://*.blob.vercel-storage.com",
+              // Uploads and downloads go straight to Blob storage, and the
+              // browser talks to TWO different Blob hosts:
+              //
+              //   vercel.com/api/blob            the upload API (@vercel/blob
+              //                                  `upload()`, including every
+              //                                  multipart part request)
+              //   <store>.private.blob.…         reading the source, the
+              //                                  status object and the result
+              //
+              // Omitting vercel.com blocks the upload outright: the request
+              // never leaves the browser, so progress sits at 0% with no
+              // error the user can see. Note `*.blob.vercel-storage.com` does
+              // NOT match the bare host, so it is listed separately.
+              "connect-src 'self' https://vercel.com https://blob.vercel-storage.com https://*.blob.vercel-storage.com",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
