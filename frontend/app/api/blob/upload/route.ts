@@ -21,6 +21,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
+import { requireSession } from "@/lib/guard";
 import { authenticate, AuthNotConfiguredError } from "@/lib/auth";
 import {
   checkConversionRateLimit,
@@ -65,6 +66,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return errorResponse("INVALID_FILE_FORMAT", "upload body was not json");
   }
+
+  // §43 - the gate. Explicit per route; see lib/guard.ts.
+  const denied = await requireSession(request);
+  if (denied) return denied;
 
   // §44 - stop abuse here, before a 100 MB upload is authorised at all.
   const rateLimit = await checkConversionRateLimit(request);

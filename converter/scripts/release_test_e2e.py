@@ -63,6 +63,15 @@ CONTROL_MESSAGE_CEILING = 64 * 1024
 
 UPLOAD_TIMEOUT = httpx.Timeout(connect=30.0, read=900.0, write=900.0, pool=30.0)
 
+# §43 - the app sits behind a shared-password gate. Automated callers present
+# the password as a header rather than signing in through the browser.
+GATE_HEADER = "x-app-password"
+
+
+def _gate_headers() -> dict[str, str]:
+    password = os.environ.get("APP_PASSWORD", "").strip()
+    return {GATE_HEADER: password} if password else {}
+
 
 @dataclass
 class Check:
@@ -105,7 +114,11 @@ def run(base_url: str, source: Path, source_format: str) -> Report:
 
     started = time.perf_counter()
 
-    with httpx.Client(timeout=UPLOAD_TIMEOUT, follow_redirects=True) as client:
+    with httpx.Client(
+        timeout=UPLOAD_TIMEOUT,
+        follow_redirects=True,
+        headers=_gate_headers(),
+    ) as client:
         # --- 1. Ask the app to authorise an upload (small JSON) -------------
         job_id = f"release-{int(time.time())}"
         date = time.strftime("%Y-%m-%d")
@@ -372,6 +385,7 @@ def _upload_via_sdk(
                 str(source),
                 MIME[source_format],
             ],
+            env={**os.environ},
             capture_output=True,
             text=True,
             timeout=1800,

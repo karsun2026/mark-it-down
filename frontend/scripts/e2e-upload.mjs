@@ -18,6 +18,10 @@ import { upload } from "@vercel/blob/client";
 
 const [baseUrl, pathname, filePath, contentType] = process.argv.slice(2);
 
+// The app is behind the shared-password gate (§43). Automated callers present
+// the password as a header instead of holding a browser cookie.
+const gatePassword = process.env.APP_PASSWORD ?? "";
+
 if (!baseUrl || !pathname || !filePath || !contentType) {
   console.log(
     JSON.stringify({
@@ -40,6 +44,9 @@ try {
     access: "private",
     handleUploadUrl: new URL("/api/blob/upload", baseUrl).toString(),
     contentType,
+    ...(gatePassword
+      ? { headers: { "x-app-password": gatePassword } }
+      : {}),
     // §12 - multipart above 25 MB, exactly as the app configures it.
     multipart: file.size >= 25 * 1024 * 1024,
   });

@@ -310,3 +310,54 @@ covered by tests in both shapes.
 
 This is exactly the class of defect §57 exists to catch: every unit test passed,
 because the tests encoded the same wrong assumption as the code.
+
+
+## D-012 - Shared-password gate instead of platform SSO
+
+**Spec:** §43 names `none` and `entra`, and says production "should use
+Microsoft Entra ID or another approved SSO/access-control method".
+
+**Context:** the deployment's production URL was publicly reachable. Vercel's
+Deployment Protection has a free tier ("Standard Protection") that covers
+preview and generated deployment URLs but **explicitly excludes production**,
+and extending it to all domains is a paid upgrade. Entra needs an app
+registration that does not yet exist.
+
+**Resolution:** a third auth mode, `password` - one shared secret, entered
+once, held in a signed HttpOnly cookie. This is §43's "another approved
+access-control method", not a departure from its intent.
+
+**Honest limitations**, recorded in SECURITY.md rather than glossed: one
+secret for everyone means no audit trail, no per-person revocation, and
+rotation affects the whole team. It is a locked door, not an identity system.
+`AUTH_MODE=entra` remains the intended production answer and is a config
+change away.
+
+## D-013 - The gate is per-route, not middleware
+
+Middleware was the first implementation and cannot work in this architecture.
+Vercel refuses the deployment outright:
+
+    Edge Runtime is not supported in services. Service "frontend" produced
+    Edge Function output "middleware".
+
+`vercel.json` declares a multi-service project, which it must in order to run
+the Python converter container (§6, §8). Next.js middleware always compiles to
+an Edge Function, so the two are mutually exclusive.
+
+**Resolution:** the check is applied explicitly at each entry point -
+`lib/guard.ts` for API routes, and a server component for the page. More
+verbose, but a new route is then visibly unguarded rather than silently
+depending on a matcher pattern someone must remember to update.
+
+Two related findings from getting this working:
+
+- `node:crypto` cannot be imported by anything middleware touches, and was the
+  first failure (`UnhandledSchemeError`). The session module now uses Web
+  Crypto, which works in both runtimes. It survived the move away from
+  middleware because it is the more portable choice regardless.
+- The route guard and `authenticate()` must accept the *same* credentials.
+  They briefly disagreed - the guard took a cookie or a bypass header, while
+  `authenticate` took only the cookie - so an automated caller cleared the
+  gate and was then refused by the identity check. Caught by the §57 release
+  test, which is precisely what it is for.

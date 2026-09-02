@@ -27,7 +27,7 @@ always produces the same Markdown.
 | 2 | Private Blob data path, job tokens, signed URLs | **Complete** |
 | 3 | Web UI | **Complete** |
 | 4 | 100 MB hardening, near-limit release test | **Complete** |
-| 5 | Auth, rate limiting, security headers | Not started |
+| 5 | Auth, rate limiting, security headers | **Complete** |
 
 The conversion core is local and network-free by design, so it is testable
 without Vercel, Blob credentials, or any platform dependency. The Blob layer
@@ -37,10 +37,13 @@ is tested against a mocked store, so the whole suite runs offline.
 against a live deployment for PPTX and PDF — see `RELEASE_TEST.md`. A 95 MB job
 moves ~190 MB through Blob storage while under 4 KB crosses a Vercel Function.
 
-**Not yet ready for real documents.** `AUTH_MODE=none`, so the app is
-anonymous, and there is no rate limiting (§43, §44). Both are Phase 5, and §43
-is explicit that internal conversion must not be exposed anonymously. Use
-Vercel Deployment Protection until then.
+**Access is gated by a shared password** (§43). The tool asks for it once,
+then works normally. See `SECURITY.md` for what that does and does not give
+you - notably, it is not per-person identity.
+
+Rate limiting (§44) is implemented but **not enforcing**: it needs a Vercel
+Firewall rule, which is a paid feature. The app logs `rate limiting is NOT in
+effect` rather than pretending otherwise.
 
 ## Why the architecture looks like this
 

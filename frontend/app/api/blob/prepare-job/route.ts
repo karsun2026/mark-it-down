@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
+import { requireSession } from "@/lib/guard";
 import {
   checkConversionRateLimit,
   warnIfDegraded,
@@ -39,6 +40,10 @@ interface PrepareJobRequest {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // §43 - the gate. Explicit per route; see lib/guard.ts.
+  const denied = await requireSession(request);
+  if (denied) return denied;
+
   // §44 - defence in depth. A caller who skipped the upload route and is
   // reusing an already-uploaded blob still passes through here.
   const rateLimit = await checkConversionRateLimit(request);

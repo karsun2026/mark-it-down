@@ -3,8 +3,10 @@
  *
  * §43 keeps auth pluggable and names two modes:
  *
- *   none   — development only
- *   entra  — Microsoft Entra ID, for production
+ *   none      — development only
+ *   password  — one shared password at the door (§43's "another approved
+ *               access-control method"); enforced by `middleware.ts`
+ *   entra     — Microsoft Entra ID, for production
  *
  * §43 is also explicit that production "should not expose internal conversion
  * capability anonymously on the internet". `AUTH_MODE=none` therefore does NOT
@@ -16,7 +18,7 @@
  * user id is never logged.
  */
 
-export type AuthMode = "none" | "entra";
+export type AuthMode = "none" | "password" | "entra";
 
 export interface Identity {
   /** Stable per-user key. `null` when anonymous. */
@@ -34,7 +36,12 @@ export class AuthNotConfiguredError extends Error {
 
 export function authMode(): AuthMode {
   const raw = (process.env.AUTH_MODE ?? "none").trim().toLowerCase();
-  return raw === "entra" ? "entra" : "none";
+  if (raw === "entra") return "entra";
+  if (raw === "password") return "password";
+  // A configured APP_PASSWORD implies the gate even if AUTH_MODE was not set,
+  // so setting one env var is enough to lock the app down.
+  if ((process.env.APP_PASSWORD ?? "").trim().length > 0) return "password";
+  return "none";
 }
 
 /** True when the deployment is relying on the platform to gate access. */
@@ -54,6 +61,22 @@ export async function authenticate(request: Request): Promise<Identity> {
 
   if (mode === "none") {
     return { userId: null, source: "anonymous" };
+  }
+
+  if (mode === "password") {
+    // One shared secret means one shared identity: everyone through the gate
+    // is the same principal. Honest about what it is - it buckets rate limits
+    // for the whole team together, and gives no audit trail.
+    //
+    // Accepts the SAME two credentials the route guard does (cookie or bypass
+    // header). If this recognised only the cookie, an automated caller would
+    // clear the guard and then be refused here - which is exactly the bug the
+    // §57 release test hit.
+    const { hasAccess } = await import("./guard");
+    if (await hasAccess(request)) {
+      return { userId: "shared", source: "password" };
+    }
+    throw new AuthNotConfiguredError("password");
   }
 
   // Entra ID. Phase 5 wires the real token validation; until the app

@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
+import { requireSession } from "@/lib/guard";
 import { inspectBlob, signResultDownload } from "@/lib/blob";
 import { verifyJobToken } from "@/lib/job-token";
 
@@ -20,6 +21,10 @@ interface DownloadUrlRequest {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // §43 - the gate. Explicit per route; see lib/guard.ts.
+  const denied = await requireSession(request);
+  if (denied) return denied;
+
   let body: DownloadUrlRequest;
   try {
     body = (await request.json()) as DownloadUrlRequest;

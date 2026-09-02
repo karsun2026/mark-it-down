@@ -97,6 +97,28 @@ violated by a later change.
 Every failure funnels through a `ConversionError` carrying a stable §46 code
 and reader-facing text. Internal detail is logged, never serialised.
 
+### Access is gated (§43)
+
+The tool is behind a shared password. §43 permits "Microsoft Entra ID **or
+another approved SSO/access-control method**"; this is the latter, chosen
+because Vercel's own "All Deployments" protection is a paid upgrade.
+
+- The password is verified **server-side only** and never appears in the
+  browser bundle.
+- On success the server sets an **HttpOnly**, Secure, SameSite cookie signed
+  with `JOB_SIGNING_SECRET`, so it cannot be read by scripts or forged.
+- Comparison is constant-time over hashed values, so neither the password nor
+  its length leaks through response timing.
+- Failed attempts are throttled per browser.
+- The gate is enforced **on the API routes, not just the page**. A client-side
+  check would leave `/api/blob/upload` reachable by anyone who reads the
+  JavaScript.
+
+Enforcement is per-route rather than in middleware, because Next.js middleware
+compiles to an Edge Function and Vercel rejects Edge Runtime in a
+multi-service project - which this must be to run the converter container.
+`lib/guard.ts` lists exactly which routes are covered and why two are not.
+
 ### Transport and browser (§45)
 
 HTTPS enforced with HSTS. A strict CSP (`default-src 'self'`, no external
@@ -115,7 +137,7 @@ These are open and tracked, not overlooked.
 
 | Gap | Status |
 |---|---|
-| **`AUTH_MODE=none` — the app is anonymous** | §43 says internal conversion must not be exposed anonymously. **Enable Vercel Deployment Protection** until Entra is wired. The Entra path is implemented but fails closed without an app registration. |
+| **Shared password, not per-person identity** | The app is gated (`AUTH_MODE=password`), but one secret is shared by everyone: no audit trail, no individual revocation, and rotation affects the whole team. Adequate for a pilot; move to Entra before this is the permanent answer for confidential documents at scale. |
 | **Rate limiting is not enforcing** | The code is in place and correct, but `@vercel/firewall` needs a dashboard rule with id `conversions` (Fixed Window, 600 s, 5 requests). Until it exists the app logs `rate limiting is NOT in effect` on every request. Set `RATE_LIMIT_REQUIRED=true` to fail closed instead. |
 | Pandoc is GPL-2.0-or-later | Invoked as a subprocess, not linked. Flagged for the §51 organisational licensing review rather than assumed to pass — see `THIRD_PARTY_NOTICES.md`. |
 | No OCR for scanned PDFs | Out of scope for v1. Scanned pages are detected and flagged, not silently returned empty. |
