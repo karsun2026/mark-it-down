@@ -1,0 +1,28 @@
+# Keep the deployment upload to just the application.
+# Vercel falls back to .gitignore, but the large fixtures and the local
+# virtualenv are big enough that this is worth being explicit about.
+
+.git
+.claude
+
+# Test fixtures, including the ~97MB near-limit files (§57)
+tests/
+converter/scripts/
+
+# Local Python environment
+converter/.venv/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Frontend deps are installed by the build
+frontend/node_modules/
+frontend/.next/
+
+# Local secrets
+.env.local
+.env.deploy.local
+
+# Docs are not needed at runtime
+*.md
+!README.md

@@ -114,12 +114,15 @@ def run(base_url: str, source: Path, source_format: str) -> Report:
         result_pathname = f"{prefix}/result/near-limit_markdown.zip"
         status_pathname = f"{prefix}/status.json"
 
+        # The event shape @vercel/blob/client's `upload()` sends. Getting this
+        # wrong returns a confusing 5xx rather than a validation error, so it is
+        # written out explicitly rather than assembled.
         auth_body = {
             "type": "blob.generate-client-token",
             "payload": {
                 "pathname": source_pathname,
                 "callbackUrl": f"{base}/api/blob/upload",
-                "multipart": True,
+                "multipart": False,
                 "clientPayload": None,
             },
         }
@@ -150,50 +153,52 @@ def run(base_url: str, source: Path, source_format: str) -> Report:
             )
         )
 
-        presigned_url = _extract_presigned_url(auth_response.json())
-        if not presigned_url:
-            report.checks.append(
-                Check(
-                    "app returned a presigned upload URL",
-                    False,
-                    "no URL found in the authorization response",
-                    "§13, D-004",
-                )
-            )
-            return report
-
+        client_token = auth_response.json().get("clientToken")
         report.checks.append(
             Check(
-                "upload target is a Blob host, not the app",
-                _is_blob_host(presigned_url),
-                urlparse(presigned_url).hostname or "?",
-                "§3, §12, §57.1",
+                "app issued a scoped client upload token",
+                bool(client_token),
+                "token issued" if client_token else auth_response.text[:160],
+                "§13",
             )
         )
+        if not client_token:
+            return report
 
         # --- 2. Upload the document DIRECTLY to Blob -----------------------
-        with source.open("rb") as handle:
-            upload_response = client.put(
-                presigned_url,
-                content=handle,
-                headers={
-                    "content-type": MIME[source_format],
-                    "content-length": str(report.source_bytes),
-                },
-            )
-        report.blob_origin_bytes += report.source_bytes
+        #
+        # Driven through the real @vercel/blob/client `upload()` via a small
+        # Node helper. Reimplementing the Blob upload protocol here would test
+        # the reimplementation, not the app.
+        upload_result = _upload_via_sdk(
+            base, source_pathname, source, source_format
+        )
+        upload_ok = bool(upload_result.get("ok"))
+        blob_url = str(upload_result.get("url", ""))
 
         report.checks.append(
             Check(
-                "browser-equivalent direct upload succeeded",
-                upload_response.status_code < 400,
-                f"HTTP {upload_response.status_code}, "
-                f"{_mb(report.source_bytes)} to Blob",
+                "browser direct upload succeeded",
+                upload_ok,
+                f"{_mb(report.source_bytes)} in "
+                f"{upload_result.get('elapsedMs', 0) / 1000:.1f}s"
+                if upload_ok
+                else str(upload_result.get("error"))[:200],
                 "§12, §57.1",
             )
         )
-        if upload_response.status_code >= 400:
+        if not upload_ok:
             return report
+
+        report.blob_origin_bytes += report.source_bytes
+        report.checks.append(
+            Check(
+                "upload landed on a private Blob host, not the app",
+                _is_blob_host(blob_url) and ".private." in blob_url,
+                urlparse(blob_url).hostname or "?",
+                "§3, §20, §57.1",
+            )
+        )
 
         # --- 3. Prepare the job (small JSON) -------------------------------
         prepare_response = client.post(
@@ -347,6 +352,44 @@ def run(base_url: str, source: Path, source_format: str) -> Report:
         )
     )
     return report
+
+
+
+def _upload_via_sdk(
+    base_url: str, pathname: str, source: Path, source_format: str
+) -> dict:
+    """Run the real client-SDK upload through a Node helper."""
+    import subprocess
+
+    script = REPO / "frontend" / "scripts" / "e2e-upload.mjs"
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [
+                "node",
+                str(script),
+                base_url,
+                pathname,
+                str(source),
+                MIME[source_format],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
+            cwd=str(REPO / "frontend"),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"node helper failed: {type(exc).__name__}"}
+
+    line = (completed.stdout or "").strip().splitlines()
+    if not line:
+        return {"ok": False, "error": (completed.stderr or "no output")[:300]}
+    try:
+        import json as _json
+
+        return _json.loads(line[-1])
+    except ValueError:
+        return {"ok": False, "error": line[-1][:300]}
 
 
 def _extract_presigned_url(payload: object) -> str | None:

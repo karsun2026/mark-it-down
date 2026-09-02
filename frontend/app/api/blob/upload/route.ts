@@ -1,24 +1,31 @@
 /**
  * Upload authorization (§13).
  *
- * Issues presigned PUT URLs so the browser uploads the source straight to
- * Private Blob. The document never passes through this Function — that is the
- * whole point of §3, given the 4.5 MB Function payload cap.
+ * Issues a single-use client token so the browser uploads the source straight
+ * to Private Blob. The document never passes through this Function — that is
+ * the whole point of §3, given the 4.5 MB Function payload cap.
  *
- * Per DEVIATIONS.md D-004 this uses the presigned flow
- * (`handleUploadPresigned`) rather than the older client-token flow, so no
- * Vercel-managed bearer token is ever in flight.
+ * This is the flow §12/§13 originally specified. DEVIATIONS D-004 briefly
+ * moved to the newer presigned flow, and D-010 records why that was reverted:
+ * `handleUploadPresigned` throws "Missing webhook public key" before it checks
+ * whether a callback is even registered, and that key is a dashboard opt-in
+ * that cannot be set from the CLI. We register no callback — `prepare-job`
+ * verifies the upload with `head()`, which is stronger, since it checks the
+ * ACTUAL size (§14) rather than trusting a notification.
  */
 
-import { issueSignedToken } from "@vercel/blob";
 import {
-  type HandleUploadPresignedBody,
-  handleUploadPresigned,
+  type HandleUploadBody,
+  handleUpload,
 } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
 import { errorResponse } from "@/lib/api-errors";
-import { isSupportedExtension, pathBelongsToJob, safeExtension } from "@/lib/filename";
+import {
+  isSupportedExtension,
+  pathBelongsToJob,
+  safeExtension,
+} from "@/lib/filename";
 import { MAX_UPLOAD_BYTES, MIME_BY_EXTENSION } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -35,19 +42,26 @@ async function isAuthorized(_request: Request): Promise<boolean> {
   return false;
 }
 
+/** Extract the job id from `jobs/<date>/<job-id>/...`. */
+function jobIdFromPathname(pathname: string): string | null {
+  const segments = pathname.split("/");
+  if (segments.length < 4 || segments[0] !== "jobs") return null;
+  return segments[2] ?? null;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
-  let body: HandleUploadPresignedBody;
+  let body: HandleUploadBody;
   try {
-    body = (await request.json()) as HandleUploadPresignedBody;
+    body = (await request.json()) as HandleUploadBody;
   } catch {
     return errorResponse("INVALID_FILE_FORMAT", "upload body was not json");
   }
 
   try {
-    const result = await handleUploadPresigned({
+    const result = await handleUpload({
       body,
       request,
-      getSignedToken: async (pathname) => {
+      onBeforeGenerateToken: async (pathname) => {
         if (!(await isAuthorized(request))) {
           throw new Error("NOT_AUTHORIZED");
         }
@@ -69,28 +83,18 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
 
         // §13 steps 7-8: restrict content type and maximum size in the token
-        // itself, so the CDN rejects an oversized or mistyped upload before a
-        // single byte reaches storage.
-        const contentType = MIME_BY_EXTENSION[extension];
-        const token = await issueSignedToken({
-          pathname,
-          operations: ["put"],
-          allowedContentTypes: [contentType],
-          maximumSizeInBytes: MAX_UPLOAD_BYTES,
-          validUntil: Date.now() + 20 * 60 * 1000,
-        });
-
+        // itself, so Blob rejects an oversized or mistyped upload before a
+        // single byte reaches storage. §20: the store is private.
         return {
-          token,
-          urlOptions: {
-            allowedContentTypes: [contentType],
-            maximumSizeInBytes: MAX_UPLOAD_BYTES,
-            addRandomSuffix: false,
-            allowOverwrite: false,
-            validUntil: Date.now() + 20 * 60 * 1000,
-          },
+          allowedContentTypes: [MIME_BY_EXTENSION[extension]],
+          maximumSizeInBytes: MAX_UPLOAD_BYTES,
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          validUntil: Date.now() + 20 * 60 * 1000,
         };
       },
+      // No onUploadCompleted: `prepare-job` verifies the blob with head(),
+      // which checks the real size rather than trusting a callback (§14).
     });
 
     return NextResponse.json(result);
@@ -104,14 +108,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       case "BAD_PATHNAME":
         return errorResponse("JOB_TOKEN_INVALID", "pathname outside job scope");
       default:
-        return errorResponse("SERVICE_UNAVAILABLE", "upload authorization failed");
+        // Log the SDK's own reason, not just our label. It concerns token
+        // issuance and carries no document content, so §47 permits recording
+        // it — and without it a misconfiguration looks like a bug.
+        return errorResponse(
+          "SERVICE_UNAVAILABLE",
+          `upload authorization failed: ${reason}`,
+        );
     }
   }
-}
-
-/** Extract the job id from `jobs/<date>/<job-id>/...`. */
-function jobIdFromPathname(pathname: string): string | null {
-  const segments = pathname.split("/");
-  if (segments.length < 4 || segments[0] !== "jobs") return null;
-  return segments[2] ?? null;
 }

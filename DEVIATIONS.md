@@ -252,3 +252,61 @@ already-approved D-003 split.
 **Intent preserved:** the library division still confines each tool to what it
 does best, no AGPL dependency is introduced, and §35's prohibition on
 rewriting or summarising text is untouched.
+
+
+## D-010 — D-004 reverted: presigned client uploads abandoned
+
+**Supersedes D-004.** Owner decision on first deployment, 2026-09-02.
+
+D-004 moved the browser upload from the flow §12/§13 specified
+(`handleUpload` + `upload`) to the newer presigned flow
+(`handleUploadPresigned` + `uploadPresigned`), on the grounds that no
+Vercel-managed bearer token would be in flight.
+
+**Why it was reverted.** `handleUploadPresigned` throws
+`"Missing webhook public key"` at the top of the function, *before* it inspects
+whether an `onUploadCompleted` callback is registered. We register none:
+`prepare-job` verifies the upload with `head()`, which is strictly stronger
+because it checks the ACTUAL byte size (§14) rather than trusting a
+notification. So the SDK demands `BLOB_WEBHOOK_PUBLIC_KEY` for a feature this
+app does not use — and that key is a dashboard opt-in on the Blob store
+connection, not settable from the CLI or reproducible in project config.
+
+The deployment therefore depended on a manual console action to enable
+something we never call.
+
+**Resolution:** revert to `handleUpload` + `upload`, which is what §12/§13
+specified in the first place. It needs only `BLOB_READ_WRITE_TOKEN`, which the
+store connection provisions automatically, and it keeps multipart uploads and
+real progress reporting.
+
+**What was given up:** a single-use client token now travels to the browser. It
+is scoped to one pathname, one content type, and a maximum size, all enforced
+by Blob rather than by us (§13 steps 7-8), and it expires in 20 minutes.
+
+Verified end to end on the deployed environment: 95 MB uploaded in 28.3 s with
+multipart, with under 4 KB crossing the app origin for the whole job.
+
+## D-011 — Presigned URL shape differs between reads and writes
+
+Not a deviation so much as a correction, recorded because the wrong assumption
+produced a security check that rejected valid traffic.
+
+`assert_url_matches_path` binds each presigned URL in a convert request to the
+pathname its job token was signed for. It assumed the pathname always appears
+in the URL path. In production it does not:
+
+- **read** operations (`get`, `head`) address the blob directly, so the
+  pathname is the URL path on the private store host;
+- **write** operations (`put`) go to the Blob API, so the pathname is a
+  `?pathname=` **query parameter** and the URL path is the fixed endpoint
+  `/api/blob/`.
+
+Every legitimate result-upload URL was therefore rejected with
+`JOB_TOKEN_INVALID`. `pathname_from_signed_url` now handles both shapes,
+preferring the query form (an API endpoint path must never be mistaken for a
+blob pathname). The binding still rejects a mismatch in either form, which is
+covered by tests in both shapes.
+
+This is exactly the class of defect §57 exists to catch: every unit test passed,
+because the tests encoded the same wrong assumption as the code.

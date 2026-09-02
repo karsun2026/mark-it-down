@@ -25,7 +25,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from app.errors import ConversionError, ErrorCode
 
@@ -176,6 +176,36 @@ def verify_job_token(token: str, secret: bytes | None = None) -> JobClaims:
     return claims
 
 
+def pathname_from_signed_url(url: str) -> str | None:
+    """Extract the blob pathname a presigned URL targets.
+
+    Vercel presigns the two operation families differently, and assuming one
+    shape rejects the other:
+
+      * read operations (``get``/``head``) address the blob directly, so the
+        pathname is the URL path on the private store host::
+
+            https://<store>.private.blob.vercel-storage.com/jobs/.../input.pptx
+
+      * write operations (``put``) go to the Blob API, so the pathname is a
+        query parameter and the URL path is a fixed endpoint::
+
+            https://vercel.com/api/blob/?pathname=jobs/.../result.zip&...
+
+    Returns None when no pathname can be determined.
+    """
+    parsed = urlparse(url)
+
+    # Query form wins when present: an API-style URL's path is the endpoint,
+    # not the blob.
+    query_pathname = parse_qs(parsed.query).get("pathname")
+    if query_pathname and query_pathname[0]:
+        return unquote(query_pathname[0]).lstrip("/")
+
+    path = unquote(parsed.path).lstrip("/")
+    return path or None
+
+
 def assert_url_matches_path(url: str, expected_pathname: str, *, label: str) -> None:
     """Bind a presigned URL to the pathname the token was signed for.
 
@@ -191,10 +221,9 @@ def assert_url_matches_path(url: str, expected_pathname: str, *, label: str) -> 
             internal_detail=f"{label} url is not https",
         )
 
-    # Presigned Blob URLs carry the pathname in the URL path.
-    actual = unquote(parsed.path).lstrip("/")
-    if actual != expected_pathname.lstrip("/"):
+    actual = pathname_from_signed_url(url)
+    if actual is None or actual != expected_pathname.lstrip("/"):
         raise ConversionError(
             ErrorCode.JOB_TOKEN_INVALID,
-            internal_detail=f"{label} url path does not match signed pathname",
+            internal_detail=f"{label} url does not target the signed pathname",
         )

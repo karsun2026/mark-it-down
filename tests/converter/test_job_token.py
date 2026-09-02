@@ -12,6 +12,7 @@ from app.security.job_token import (
     JobClaims,
     assert_url_matches_path,
     mint_job_token,
+    pathname_from_signed_url,
     signing_secret,
     verify_job_token,
 )
@@ -171,3 +172,59 @@ class TestUrlBinding:
                 self.PATH,
                 label="result",
             )
+
+
+class TestSignedUrlShapes:
+    """Vercel presigns reads and writes differently (found in production).
+
+    A read URL addresses the blob directly, so the pathname is the URL path.
+    A write URL goes to the Blob API, so the pathname is a query parameter and
+    the path is a fixed endpoint. Assuming the read shape rejected every
+    legitimate result-upload URL with JOB_TOKEN_INVALID.
+    """
+
+    PATH = "jobs/2026-09-02/j1/result/report_markdown.zip"
+
+    def test_read_url_pathname_comes_from_the_url_path(self) -> None:
+        url = (
+            "https://store.private.blob.vercel-storage.com/"
+            "jobs/2026-09-02/j1/source/report.pdf"
+            "?vercel-blob-delegation=x&vercel-blob-signature=y"
+        )
+        assert (
+            pathname_from_signed_url(url)
+            == "jobs/2026-09-02/j1/source/report.pdf"
+        )
+
+    def test_write_url_pathname_comes_from_the_query(self) -> None:
+        url = (
+            f"https://vercel.com/api/blob/?pathname={self.PATH}"
+            "&vercel-blob-delegation=x&vercel-blob-signature=y"
+        )
+        assert pathname_from_signed_url(url) == self.PATH
+
+    def test_write_url_binds_successfully(self) -> None:
+        url = f"https://vercel.com/api/blob/?pathname={self.PATH}&x=1"
+        assert_url_matches_path(url, self.PATH, label="result")
+
+    def test_write_url_with_wrong_pathname_still_rejected(self) -> None:
+        """The guard must keep working in the query form."""
+        url = "https://vercel.com/api/blob/?pathname=jobs/other/evil.zip"
+        with pytest.raises(ConversionError) as caught:
+            assert_url_matches_path(url, self.PATH, label="result")
+        assert caught.value.code is ErrorCode.JOB_TOKEN_INVALID
+
+    def test_url_encoded_query_pathname(self) -> None:
+        url = (
+            "https://vercel.com/api/blob/"
+            "?pathname=jobs/2026-09-02/j1/result/Market%20Study.zip"
+        )
+        assert (
+            pathname_from_signed_url(url)
+            == "jobs/2026-09-02/j1/result/Market Study.zip"
+        )
+
+    def test_query_form_takes_precedence_over_path(self) -> None:
+        """An API endpoint path must never be mistaken for the blob pathname."""
+        url = f"https://vercel.com/api/blob/?pathname={self.PATH}"
+        assert pathname_from_signed_url(url) != "api/blob/"

@@ -32,3 +32,7 @@ frontend/.next/
 frontend/node_modules/
 frontend/next-env.d.ts
 tests/converter/fixtures/large/
+.env.deploy.local
+
+.vercel
+.env*

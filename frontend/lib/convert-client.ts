@@ -12,7 +12,7 @@
  * rather than failing the job.
  */
 
-import { uploadPresigned } from "@vercel/blob/client";
+import { upload } from "@vercel/blob/client";
 
 import { buildJobPaths, type JobPaths } from "./filename";
 import {
@@ -84,7 +84,7 @@ async function uploadSource(
 ): Promise<void> {
   const extension = safeExtension(file.name) as SupportedExtension;
 
-  await uploadPresigned(paths.sourcePathname, file, {
+  await upload(paths.sourcePathname, file, {
     access: "private",
     handleUploadUrl: "/api/blob/upload",
     contentType: MIME_BY_EXTENSION[extension],

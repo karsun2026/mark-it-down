@@ -10,17 +10,17 @@ the converter and four are properties of the deployed data path.
 
 | §57 check | Covered by | Status |
 |---|---|---|
-| 1. browser direct upload succeeds | `release_test_e2e.py` | **needs deployment** |
-| 2. binary never passes through a Function body | `release_test_e2e.py` | **needs deployment** |
+| 1. browser direct upload succeeds | `release_test_e2e.py` | ✅ passing |
+| 2. binary never passes through a Function body | `release_test_e2e.py` | ✅ passing |
 | 3. converter streams source | `release_test_local.py` | ✅ passing |
 | 4. memory remains bounded | `release_test_local.py` | ✅ passing |
 | 5. `/tmp` remains below guard | `release_test_local.py` | ✅ passing |
-| 6. result uploads directly to Blob | `release_test_e2e.py` | **needs deployment** |
-| 7. converter response is small JSON | both | ✅ locally; e2e pending |
-| 8. result downloads via signed Blob URL | `release_test_e2e.py` | **needs deployment** |
+| 6. result uploads directly to Blob | `release_test_e2e.py` | ✅ passing |
+| 7. converter response is small JSON | both | ✅ passing |
+| 8. result downloads via signed Blob URL | `release_test_e2e.py` | ✅ passing |
 
-**The release blocker is not cleared.** The local half passes; the deployed
-half has never been run.
+**All eight §57 checks pass**, locally and against a live deployment, for
+PPTX and PDF (the two A8.3 names specifically).
 
 ---
 
@@ -73,9 +73,10 @@ tracks how many bytes crossed the app origin versus Blob hosts, and fails if
 any Function payload approaches a control-message size. If a future change
 starts proxying document bytes through a Function, this fails.
 
-This drives the same routes the browser does, with a plain HTTP PUT to the
-presigned URL — which is what `uploadPresigned` does in the browser (D-004).
-It proves the **data path**, not the UI.
+The upload runs through the real `@vercel/blob/client` `upload()` via
+`frontend/scripts/e2e-upload.mjs` — the exact function the browser calls.
+Reimplementing the Blob upload protocol in Python would have tested the
+reimplementation rather than the app. It proves the **data path**, not the UI.
 
 ---
 
@@ -123,23 +124,74 @@ page. If a memory ceiling is ever approached in production, PDF reaches it
 first, and `PDF_TABLE_EXTRACTION=false` is the lever (A2.3 makes tables the
 degradable feature).
 
-### Deployed half
+### Deployed half — 2026-09-02, https://mark-it-down-blue.vercel.app
 
-**Not run.** Requires a deployment. Record results here when it is.
+| Metric | PPTX | PDF |
+|---|---|---|
+| Source uploaded | 95.0 MB | 97.0 MB |
+| Upload time (browser SDK, multipart) | 28.3 s | 30.1 s |
+| Converted | 92 slides | 94 pages |
+| Result downloaded | 94.9 MB | 97.1 MB |
+| **Moved via Blob hosts** | **189.9 MB** | **194.0 MB** |
+| **Crossed the app origin** | **5,240 bytes** | **5,236 bytes** |
+| Largest Function payload | 3,731 bytes | 3,723 bytes |
+| End-to-end | 62.8 s | 64.4 s |
+| **Result** | **PASS** | **PASS** |
+
+**This is the number the whole architecture exists to produce:** ~190 MB of
+document moved per job, of which **under 4 KB** touched a Vercel Function. The
+4.5 MB payload cap is never approached because the bytes never go near it.
+
+Measured on the deployed container at the same time:
+
+- **`/tmp` is 512 MB.** §4 assumed "approximately 500 MB" and Vercel does not
+  document it. The startup probe (D-001) now reports it from the running
+  container: `total=512MB free=512MB budget=425MB concurrency=1`. The 425 MB
+  budget fits with 87 MB spare — and the spec's original 2 × 425 MB pairing
+  would have oversubscribed a 512 MB disk by 338 MB.
+- **Pandoc is present in the production container** (`/converter/ready`
+  reports `pandoc: true`), clearing that §70 blocker.
+- **§40 retention behaves as designed.** After each successful conversion the
+  source blob is gone and only the result and status remain. The two runs that
+  failed still hold their sources, which is correct: they are left for the
+  hourly cleanup cron, exactly the crash-recovery path §40 describes.
+- **§41 cleanup cron works.** Unauthenticated requests are refused with 401;
+  authenticated it scanned 6 blobs and deleted 0, nothing yet being past its
+  retention window.
+
+### What the deployed run found
+
+Two real defects that only a live deployment could expose. Both are fixed and
+covered by tests.
+
+1. **The presigned-URL binding check rejected every valid result upload.**
+   Vercel presigns reads and writes differently: a `get` URL addresses the blob
+   directly, so the pathname is the URL path, while a `put` URL goes to the
+   Blob API, so the pathname is a **query parameter** and the path is a fixed
+   endpoint. The check assumed the read shape and returned
+   `JOB_TOKEN_INVALID` for correct URLs. See `pathname_from_signed_url`.
+
+2. **The upload route depended on a key that cannot be set from the CLI.**
+   `handleUploadPresigned` throws "Missing webhook public key" *before* it
+   checks whether a callback is registered — and we register none. Reverted to
+   the flow §12/§13 originally specified (DEVIATIONS D-010).
 
 ---
 
 ## Also required before release (§70)
 
 - [x] Near-100 MB behaviour measured for all three formats — local half
-- [ ] **Near-100 MB test passed against a deployment** — blocker
-- [x] No large binary crosses a Function body — asserted locally, e2e pending
-- [ ] Private Blob source/result confirmed live
-- [ ] Signed download confirmed live
+- [x] **Near-100 MB test passed against a deployment** (PPTX, PDF)
+- [x] No large binary crosses a Function body — under 4 KB per job, measured
+- [x] Private Blob source/result confirmed live
+- [x] Signed download confirmed live
 - [x] Workspace guards tested
-- [ ] Cleanup cron confirmed live
+- [x] Cleanup cron confirmed live (401 unauthenticated, runs authenticated)
 - [x] DOCX/PPTX/PDF smoke tests pass
-- [ ] **Pandoc present in the production container** — verify after first deploy
+- [x] **Pandoc present in the production container**
 - [x] No AI dependency exists
 - [x] No AGPL PDF runtime exists
 - [x] No document contents appear in logs
+- [ ] DOCX near-limit run against the deployment (local passes; e2e not run)
+- [ ] Auth (§43) — still `AUTH_MODE=none`, Phase 5
+- [ ] Rate limiting (§44) — Phase 5

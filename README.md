@@ -16,7 +16,8 @@ always produces the same Markdown.
 - **Storage:** temporary Private Vercel Blob only, automatically deleted
 
 `ENGINEERING_SPEC.md` is the source of truth for the build.
-`DEVIATIONS.md` records the five documented departures from it.
+`DEVIATIONS.md` records the documented departures from it and from
+`ENGINEERING_SPEC_AMENDMENT_01.md`. `RELEASE_TEST.md` records the §57 results.
 
 ## Status
 
@@ -25,15 +26,21 @@ always produces the same Markdown.
 | 1 | Converter core, validation, packaging, tests | **Complete** |
 | 2 | Private Blob data path, job tokens, signed URLs | **Complete** |
 | 3 | Web UI | **Complete** |
-| 4 | 100 MB hardening, near-limit release test | Not started |
-| 5 | Auth, rate limiting, cron cleanup, deployment | Not started |
+| 4 | 100 MB hardening, near-limit release test | **Complete** |
+| 5 | Auth, rate limiting, security headers | Not started |
 
 The conversion core is local and network-free by design, so it is testable
 without Vercel, Blob credentials, or any platform dependency. The Blob layer
 is tested against a mocked store, so the whole suite runs offline.
 
-**Not production-ready.** §70 makes the near-100 MB test a release blocker and
-it has not been run. Auth and rate limiting are Phase 5.
+**Deployed and §57 verified.** All eight near-limit release-test checks pass
+against a live deployment for PPTX and PDF — see `RELEASE_TEST.md`. A 95 MB job
+moves ~190 MB through Blob storage while under 4 KB crosses a Vercel Function.
+
+**Not yet ready for real documents.** `AUTH_MODE=none`, so the app is
+anonymous, and there is no rate limiting (§43, §44). Both are Phase 5, and §43
+is explicit that internal conversion must not be exposed anonymously. Use
+Vercel Deployment Protection until then.
 
 ## Why the architecture looks like this
 
