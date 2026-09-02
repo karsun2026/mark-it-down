@@ -77,6 +77,10 @@ export default function ConverterApp() {
   const [elapsed, setElapsed] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
+  // Latched once the job finishes. A late progress update must never be able
+  // to move a completed job back to a spinner - that is exactly what left one
+  // user staring at "Preparing your download" on top of a ready file.
+  const settledRef = useRef(false);
 
   // A visible clock. Without it "a few minutes" is a guess, and a stalled job
   // is indistinguishable from a slow one.
@@ -97,6 +101,7 @@ export default function ConverterApp() {
     setUploadPercent(0);
     setStartedAt(null);
     setElapsed(0);
+    settledRef.current = false;
     setStage(null);
     setOutcome(null);
     setError(null);
@@ -104,6 +109,7 @@ export default function ConverterApp() {
 
   const fail = useCallback(
     (code: ErrorCode, message: string, preflight = false) => {
+      settledRef.current = true;
       setError({ code, message, preflight });
       setState("error");
     },
@@ -138,6 +144,7 @@ export default function ConverterApp() {
     setStage(null);
     setStartedAt(Date.now());
     setElapsed(0);
+    settledRef.current = false;
 
     try {
       const result = await convertDocument(file, controller.signal, {
@@ -146,11 +153,13 @@ export default function ConverterApp() {
           if (percentage >= 100) setState("converting");
         },
         onStage: (status) => {
+          if (settledRef.current) return;
           setState("converting");
           setStage(status.stage);
         },
       });
 
+      settledRef.current = true;
       setState("preparing-download");
       setOutcome(result);
       setState("complete");
@@ -268,6 +277,8 @@ export default function ConverterApp() {
             filename={outcome.filename}
             sizeBytes={outcome.sizeBytes}
             warnings={outcome.warnings}
+            jobToken={outcome.jobToken}
+            resultPathname={outcome.resultPathname}
             onReset={reset}
           />
         )}

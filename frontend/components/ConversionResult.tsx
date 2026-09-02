@@ -4,10 +4,16 @@
  * Completion panel with the download link (§2, §19).
  *
  * The link points straight at the signed Blob URL, so the ZIP never passes
- * back through a Function. Warnings are surfaced here rather than buried in
- * the report, because they tell the user what the conversion could not do.
+ * back through a Function.
+ *
+ * Signed download URLs live for 10 minutes (§19). Leaving the tab open while
+ * you make a coffee should not cost you a 95 MB conversion, so the panel can
+ * mint a fresh link on demand rather than sending you back to a re-upload.
  */
 
+import { useState } from "react";
+
+import { refreshDownloadUrl } from "@/lib/convert-client";
 import { formatBytes } from "@/lib/filename";
 
 /**
@@ -22,6 +28,8 @@ interface ConversionResultProps {
   filename: string;
   sizeBytes: number;
   warnings: string[];
+  jobToken: string;
+  resultPathname: string;
   onReset: () => void;
 }
 
@@ -30,8 +38,29 @@ export function ConversionResult({
   filename,
   sizeBytes,
   warnings,
+  jobToken,
+  resultPathname,
   onReset,
 }: ConversionResultProps) {
+  const [href, setHref] = useState(downloadUrl);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+
+  async function refresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshError("");
+    try {
+      setHref(await refreshDownloadUrl(jobToken, resultPathname));
+    } catch {
+      setRefreshError(
+        "Could not get a new link. The file is kept for about two hours after conversion.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <div className="card">
       <h2 style={{ marginTop: 0, fontSize: "1.15rem" }}>Conversion complete</h2>
@@ -41,19 +70,29 @@ export function ConversionResult({
 
       <div className="actions">
         {/* download attribute keeps the original name rather than the blob path */}
-        <a href={downloadUrl} download={filename}>
+        <a href={href} download={filename}>
           <button type="button" className="primary">
             Download ZIP
           </button>
         </a>
+        <button type="button" onClick={refresh} disabled={refreshing}>
+          {refreshing ? "Getting a new link…" : "Get a new link"}
+        </button>
         <button type="button" onClick={onReset}>
           Convert another file
         </button>
       </div>
 
-      <p className="muted" style={{ marginTop: "0.9rem" }}>
-        This download link is temporary and expires shortly.
-      </p>
+      {refreshError ? (
+        <p className="muted" role="alert" style={{ marginTop: "0.9rem" }}>
+          {refreshError}
+        </p>
+      ) : (
+        <p className="muted" style={{ marginTop: "0.9rem" }}>
+          The download link expires after about 10 minutes. If it stops working,
+          use <strong>Get a new link</strong> — you do not need to convert again.
+        </p>
+      )}
 
       {warnings.length > 0 && (
         <div className="warnings">

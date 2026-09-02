@@ -80,6 +80,9 @@ export interface ConversionOutcome {
   filename: string;
   sizeBytes: number;
   warnings: string[];
+  /** Kept so a new signed link can be minted when the first one expires. */
+  jobToken: string;
+  resultPathname: string;
 }
 
 async function readApiError(
@@ -252,7 +255,12 @@ async function runConversion(
       return body.warnings ?? [];
     });
 
-  const polling = pollStatus(job.statusGetUrl, signal, onStage).then((status) => {
+  // Its own controller so the race can cancel it without cancelling the job.
+  const pollAbort = new AbortController();
+  if (signal.aborted) pollAbort.abort();
+  else signal.addEventListener("abort", () => pollAbort.abort(), { once: true });
+
+  const polling = pollStatus(job.statusGetUrl, pollAbort.signal, onStage).then((status) => {
     if (!status.ok) {
       throw new ConversionError(
         status.code ?? "CONVERSION_FAILED",
@@ -261,6 +269,11 @@ async function runConversion(
     }
     return status.warnings ?? [];
   });
+
+  // Late rejections from the branch that loses the race are expected and must
+  // not surface as unhandled.
+  convertRequest.catch(() => {});
+  polling.catch(() => {});
 
   // Promise.any resolves on the first SUCCESS, so a dropped POST does not
   // fail the job while the poll is still watching it succeed.
@@ -273,6 +286,14 @@ async function runConversion(
       throw known ?? error.errors[0];
     }
     throw error;
+  } finally {
+    // STOP THE LOSER. This is the bug that made a finished job look stuck:
+    // when the convert POST won, the poll kept running and fired one more
+    // `onStage("complete")` AFTER the flow had already completed and rendered
+    // the download button. The handler set the UI back to "converting", and
+    // nothing ever moved it forward again - a spinner on top of a finished
+    // download. Cancelling the losing branch is what makes the race safe.
+    pollAbort.abort();
   }
 }
 
@@ -341,6 +362,24 @@ async function requestDownloadUrlOnce(
   return (await response.json()) as { downloadUrl: string; sizeBytes: number };
 }
 
+/**
+ * Mint a fresh signed download link for a finished job.
+ *
+ * §19 gives download URLs a 10-minute life. Without this, stepping away for
+ * ten minutes turns a completed conversion into a dead link and a re-upload.
+ */
+export async function refreshDownloadUrl(
+  jobToken: string,
+  resultPathname: string,
+): Promise<string> {
+  const controller = new AbortController();
+  const { downloadUrl } = await requestDownloadUrl(
+    { jobToken, resultPathname } as PrepareJobResponse,
+    controller.signal,
+  );
+  return downloadUrl;
+}
+
 /** Run the whole flow for one file. */
 export async function convertDocument(
   file: File,
@@ -373,5 +412,7 @@ export async function convertDocument(
     filename: `${paths.displayStem}_markdown.zip`,
     sizeBytes,
     warnings,
+    jobToken: job.jobToken,
+    resultPathname: job.resultPathname,
   };
 }

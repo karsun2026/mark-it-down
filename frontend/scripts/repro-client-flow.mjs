@@ -42,13 +42,17 @@ function jobPaths(name) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Mirrors pollStatus in lib/convert-client.ts. */
-async function pollStatus(statusGetUrl) {
+async function pollStatus(statusGetUrl, pollSignal) {
   const deadline = Date.now() + 720_000;
   let lastStage = "";
   let failures = 0;
   let reads = 0;
 
   while (Date.now() < deadline) {
+    if (pollSignal.aborted) {
+      log('  poll CANCELLED (race already settled)');
+      return { stage: 'cancelled', done: true, ok: true, warnings: [] };
+    }
     try {
       const response = await fetch(statusGetUrl, { cache: "no-store" });
       reads += 1;
@@ -121,14 +125,22 @@ async function main() {
   });
   convertRequest.catch((error) => log(`  convert POST rejected: ${error.message}`));
 
-  const polling = pollStatus(job.statusGetUrl).then((status) => {
+  const pollAbort = new AbortController();
+  const polling = pollStatus(job.statusGetUrl, pollAbort.signal).then((status) => {
     if (!status.ok) throw new Error(`status not ok: ${status.code}`);
     return status.warnings ?? [];
   });
   polling.catch((error) => log(`  polling rejected: ${error.message}`));
 
   log("racing convert POST against status polling...");
-  const warnings = await Promise.any([convertRequest, polling]);
+  let warnings;
+  try {
+    warnings = await Promise.any([convertRequest, polling]);
+  } finally {
+    // THE FIX: cancel the losing branch so it cannot emit a late stage update
+    // after the flow has already completed.
+    pollAbort.abort();
+  }
   log(`RACE RESOLVED (${warnings.length} warnings)`);
 
   // --- the step that appears to stall --------------------------------------
