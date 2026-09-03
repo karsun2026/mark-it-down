@@ -14,6 +14,7 @@ conversion, because the workspace budget covers the downloaded source too.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -38,9 +39,18 @@ _semaphore = threading.BoundedSemaphore(
     max(1, settings.max_local_concurrent_conversions)
 )
 
-# How long to wait for a slot before shedding load. Waiting out the whole
-# conversion deadline would just guarantee a timeout instead of a clean 503.
-SLOT_WAIT_SECONDS = 30
+# How long a job waits for a free conversion slot before giving up.
+#
+# Measured, not guessed: at 8 simultaneous jobs against production, Vercel had
+# scaled to roughly five container instances within 30 seconds and the other
+# three were rejected while a slot was seconds away from freeing. Each instance
+# runs one conversion, so the queue drains at the rate jobs finish - waiting is
+# almost always the right answer, and rejecting at 30s turned a short queue
+# into a hard failure.
+#
+# The ceiling is the converter's own 690s deadline, so this stays well inside
+# it: a queued job that waits this long and then converts still completes.
+SLOT_WAIT_SECONDS = max(1, int(os.environ.get("SLOT_WAIT_SECONDS") or 240))
 
 
 def run_job(request: ConvertRequest) -> ConvertResponse:
