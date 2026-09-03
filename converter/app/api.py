@@ -14,10 +14,12 @@ forbids returning stack traces, so every handler funnels failures through
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -49,6 +51,41 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
+
+
+# The converter is called cross-origin by the market intelligence suite, so the
+# browser sends a preflight before the convert POST. Origins are ALLOW-LISTED
+# from the environment rather than opened to "*": this endpoint spends real
+# compute, and although every request must still carry a valid HMAC job token,
+# there is no reason to let an arbitrary page attempt one.
+#
+# CORS_ALLOWED_ORIGINS is a comma-separated list of absolute origins.
+_allowed_origins = [
+    origin.strip()
+    for origin in (os.environ.get("CORS_ALLOWED_ORIGINS") or "").split(",")
+    if origin.strip()
+]
+# Preview deployments get a generated hostname, so an exact list cannot cover
+# them. CORS_ALLOWED_ORIGIN_REGEX takes a BOUNDED pattern (one project's
+# preview hosts), never a blanket wildcard.
+_allowed_origin_regex = (os.environ.get("CORS_ALLOWED_ORIGIN_REGEX") or "").strip()
+
+if _allowed_origins or _allowed_origin_regex:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_origin_regex=_allowed_origin_regex or None,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["content-type"],
+        # No cookies are involved: authorisation is the job token in the body.
+        allow_credentials=False,
+        max_age=3600,
+    )
+    logger.info(
+        "CORS enabled: %d exact origin(s), regex=%s",
+        len(_allowed_origins),
+        bool(_allowed_origin_regex),
+    )
 
 
 @app.exception_handler(ConversionError)
