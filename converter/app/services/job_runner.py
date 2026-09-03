@@ -73,7 +73,18 @@ def run_job(request: ConvertRequest) -> ConvertResponse:
 
     status = StatusPublisher(claims.job_id, request.statusPutUrl)
 
+    # Publish BEFORE waiting for a slot. Until this write lands there is no
+    # status object at all, and to the client "not written yet" (404) is
+    # indistinguishable from a hung job - it polls on in silence. With only one
+    # conversion slot, a queued job used to spend up to SLOT_WAIT_SECONDS
+    # completely invisible. Now it says so within a single poll interval.
+    status.publish(Stage.ACCEPTED)
+
     if not _semaphore.acquire(timeout=SLOT_WAIT_SECONDS):
+        # This raise sits OUTSIDE the try below, so the `except` there never saw
+        # it and no terminal status was ever written: the queue timeout was the
+        # one failure the client could not observe. Publish it explicitly.
+        status.publish(Stage.FAILED, error_code=ErrorCode.SERVICE_UNAVAILABLE)
         raise ConversionError(
             ErrorCode.SERVICE_UNAVAILABLE,
             internal_detail="no conversion slot available",

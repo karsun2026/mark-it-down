@@ -159,7 +159,12 @@ class TestSuccessfulJob:
         client.post("/converter/v1/convert", json=make_body())
         stages = [s["stage"] for s in blob["statuses"]]
 
-        assert stages[0] == "downloading"
+        # "accepted" is published BEFORE the concurrency slot is acquired, so
+        # a queued job is visible instead of looking hung: until that first
+        # write lands there is no status object at all, and the client cannot
+        # tell "waiting for a slot" from "dead".
+        assert stages[0] == "accepted"
+        assert stages[1] == "downloading"
         assert "converting" in stages
         assert stages[-1] == "complete"
         assert blob["statuses"][-1]["done"] is True
