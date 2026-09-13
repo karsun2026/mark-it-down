@@ -128,7 +128,8 @@ The next engineer/model needs to know, without chat history:
    `frontend/` here should be designed for later porting.
 4. Pip installs must use `--only-binary=:all:`; npm installs must use
    `--ignore-scripts`. Pushing to `main` deploys the converter to production.
-5. Read, in this order: `docs/readmap/ARCHITECTURE_DECISIONS.md` →
-   `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md` → answer the BLOCKED
-   questions, then approve Phase 1.
+5. Read, in this order: `HANDOFF_READMAP.md` (the dated session handoff at
+   the repo root) → `docs/readmap/ARCHITECTURE_DECISIONS.md` →
+   `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`; then continue the Phase 1
+   build sequence it lists.
 
