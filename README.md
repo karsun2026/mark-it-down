@@ -11,6 +11,10 @@ No model is called at any point. Every conversion is deterministic: Pandoc for
 DOCX, python-pptx for PPTX, pdfplumber and pypdf for PDF. The same document
 always produces the same Markdown.
 
+This guarantee covers the conversion path only. The separate READMAP agent
+(`docs/readmap/`) analyses the *converted text* with AI and is labelled as
+such; conversions themselves never call a model.
+
 - **Supported inputs:** `.docx`, `.pptx`, `.pdf`
 - **Maximum source size:** 100 MB
 - **Storage:** temporary Private Vercel Blob only, automatically deleted

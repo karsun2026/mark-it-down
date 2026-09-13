@@ -411,3 +411,26 @@ rejects a mismatch between the requested mode and the path it is asked to sign.
 
 **Intent preserved:** §38's package layout is unchanged whenever a ZIP is
 produced, and the §37 Markdown output contract holds in both shapes.
+
+## D-016 - Zero-AI constraint scoped to the conversion path
+
+**Spec:** `AGENTS.md` hard constraints: "No AI model. No AI Gateway. No
+OpenAI/Anthropic/Gemini. AI token usage must remain zero." `README.md`
+banner: "AI tokens consumed per conversion: 0". ENGINEERING_SPEC §64 makes
+zero AI tokens an acceptance criterion.
+
+**Problem:** READMAP — an evidence-grounded document-intelligence agent built
+on this repository's conversion output — requires structured model calls
+(Mapper, Signal Extractor, Skeptic, Compressor) by design. The prohibition as
+written made the repository permanently incompatible with it.
+
+**Resolution (approved by the repository owner, 2026-09-13):** the zero-AI
+prohibition is scoped to the conversion path. The converter remains 100%
+deterministic and AI-free; `ConvertResponse.aiTokensUsed` stays 0 on every
+conversion and §64 remains machine-checked. READMAP's model calls live in
+separate routes under `frontend/` (`app/api/readmap/`, `lib/readmap/`),
+never inside `converter/`, and operate only on converted text. Full rationale
+and guards: `docs/readmap/ARCHITECTURE_DECISIONS.md` (ADR-001, ADR-006).
+
+**Intent preserved:** the per-conversion guarantee is unchanged and still
+verifiable; a user who never touches READMAP sees no behavioural difference.

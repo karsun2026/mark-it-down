@@ -11,10 +11,11 @@ Hard constraints:
 - Direct browser source upload.
 - Signed Blob URLs.
 - Converter runs on Vercel.
-- No AI model.
-- No AI Gateway.
-- No OpenAI/Anthropic/Gemini.
-- AI token usage must remain zero.
+- No AI in the conversion path: the converter calls no AI model, no AI Gateway,
+  no OpenAI/Anthropic/Gemini, and every conversion consumes zero AI tokens
+  (DEVIATIONS.md D-016). The READMAP analysis agent is the documented
+  exception: it runs outside the converter, on converted text only, and
+  never alters conversion output. See docs/readmap/ARCHITECTURE_DECISIONS.md.
 - Do not use PyMuPDF or PyMuPDF4LLM.
 - Avoid AGPL runtime dependencies.
 - Do not log document contents.
