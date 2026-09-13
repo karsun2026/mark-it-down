@@ -32,6 +32,11 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
 - Page/slide-addressable Markdown: PDF emits `## Page N` + `---` per page;
   PPTX emits `## Slide N — Title` per slide; DOCX (Pandoc) emits headings only
   (no page anchors exist for DOCX).
+- READMAP evidence layer (Phase 1, first increment): deterministic
+  `frontend/lib/readmap/ingestion/segment.ts` segments converter Markdown
+  into page/slide-anchored evidence blocks behind the Zod-validated
+  `ConvertedDocumentV1` contract (`frontend/lib/readmap/schemas/evidence.ts`);
+  13 tests pin it to the converter's real output grammar.
 
 ## What does not work yet
 
@@ -74,8 +79,12 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | Check | Result | Date | Evidence/report |
 |---|---|---|---|
 | Repository audit (Phase 0 exit) | Complete | 2026-09-13 | This file + `ARCHITECTURE_DECISIONS.md` + `PHASE_1_IMPLEMENTATION_PLAN.md` |
-| Existing suites re-run | Not run in this session | 2026-09-13 | No application code was changed; last known-good per `HANDOFF.md` (336 tests) |
-| README/spec conflict review | 1 blocking conflict found | 2026-09-13 | ADR-001 |
+| Existing frontend suite re-run | 76/76 pass — no regressions | 2026-09-13 | `npm run test` |
+| New segmentation tests | 13/13 pass | 2026-09-13 | `frontend/lib/readmap/ingestion/segment.test.ts` |
+| Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
+| Production build | Not yet run this phase | — | At Phase 1 exit |
+| Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
+| README/spec conflict review | 1 blocking conflict found → resolved | 2026-09-13 | ADR-001 approved |
 
 ## Known risks
 
