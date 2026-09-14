@@ -37,19 +37,29 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
   into page/slide-anchored evidence blocks behind the Zod-validated
   `ConvertedDocumentV1` contract (`frontend/lib/readmap/schemas/evidence.ts`);
   13 tests pin it to the converter's real output grammar.
+- READMAP model client layer (Phase 1, second increment): the spec §5
+  `StructuredModelClient` contract (`frontend/lib/readmap/models/client.ts`),
+  a Gemini adapter over plain `fetch` — no provider SDK — with Zod-validated
+  structured output, a Gemini-subset `responseSchema` conversion, and exactly
+  one schema-repair attempt (`models/gemini.ts`); the labelled dev adapter
+  that serves only pre-registered fixtures and fails closed outside
+  development (`models/dev-adapter.ts`); and the per-role router
+  (`models/model-router.ts`). 29 tests pin the wire contract, the
+  one-repair-attempt rule (spec §10), and the fail-closed behaviour.
 
 ## What does not work yet
 
-- No READMAP code exists. Nothing has been implemented, wired, or mocked.
-- No model integration of any kind exists in this repository (deliberately —
-  ADR-001 now approved: the zero-AI rule is scoped to the converter only).
+- No READMAP routes, UI, or agent pipeline exists yet — the model client layer
+  has no consumers. Nothing is user-facing.
+- No live model call has ever been made: every adapter test runs offline
+  against a faked `fetch` seam or registered fixtures. Zero tokens spent.
 - No database, no queue, no OCR, no vision.
 
 ## Development-only adapters or mocks
 
 | Adapter | Purpose | Production blocked? | Removal condition |
 |---|---|---|---|
-| None created yet | — | — | — |
+| `frontend/lib/readmap/models/dev-adapter.ts` | Labelled dev model adapter serving ONLY pre-registered fixture responses (`registerDevResponse`); never invents output | Yes — requires `READMAP_MODEL_PROVIDER=dev` AND `APP_ENV=development`, re-checked on every call | Serves until agents are wired against the real Gemini adapter in this environment; delete when no longer used |
 
 Phase 1 will introduce a labelled development model adapter if no provider key
 exists. It must fail closed outside development (`.clinerules/readmap.md` rule 15).
@@ -81,6 +91,8 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | Repository audit (Phase 0 exit) | Complete | 2026-09-13 | This file + `ARCHITECTURE_DECISIONS.md` + `PHASE_1_IMPLEMENTATION_PLAN.md` |
 | Existing frontend suite re-run | 76/76 pass — no regressions | 2026-09-13 | `npm run test` |
 | New segmentation tests | 13/13 pass | 2026-09-13 | `frontend/lib/readmap/ingestion/segment.test.ts` |
+| New model-layer tests | 29/29 pass (11 gemini, 9 dev-adapter, 9 model-router) | 2026-09-13 | `frontend/lib/readmap/models/*.test.ts` |
+| Frontend suite re-run | 118/118 pass — no regressions | 2026-09-13 | `npm run test` |
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
@@ -101,12 +113,13 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 
 ## Next approved task
 
-**Phase 1 build**, on branch `feature/readmap-mvp`, per
-`docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`. All owner approvals recorded
-2026-09-13: ADR-001 (zero-AI scoped to the converter), ADR-004 (Blob
-persistence), ADR-006 update (Gemini-only; Perplexity excluded as
-search-grounded), ADR-007 (build in this repository). Keys: shared Gemini
-key acceptable to start (owner-confirmed); goes only in
+**Phase 1, increment 3 — agent skeletons** (Mapper, Signal Extractor,
+Skeptic, Compressor) under `frontend/lib/readmap/agents/`, with Zod
+contracts and versioned prompts under `frontend/lib/readmap/prompts/`,
+consuming the model client layer via `model-router.getClientForTask`
+(grounding gate and numeric checks follow in their planned increments).
+Work stays on `feature/readmap-mvp`; all owner approvals recorded 2026-09-13
+(ADR-001 scoped, ADR-004, ADR-006 Gemini-only, ADR-007). Keys go only in
 `frontend/.env.local` and this Vercel project's env settings — never
 committed.
 

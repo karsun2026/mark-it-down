@@ -38,6 +38,17 @@ continues the build.
    page/slide-anchored evidence blocks), with 13 tests pinning them to the
    converter's real output grammar. Frontend suite: **89/89 pass**
    (76 existing — no regressions — + 13 new); typecheck clean.
+5. **Phase 1, increment 2 shipped**: the model client layer under
+   `frontend/lib/readmap/models/` — the spec §5 `StructuredModelClient`
+   contract (`client.ts`), the Gemini adapter over plain `fetch` with
+   Zod-validated structured output and exactly one schema-repair attempt
+   (`gemini.ts`, ADR-006: no SDK), the labelled dev adapter serving only
+   pre-registered fixtures and failing closed outside
+   `APP_ENV=development` + `READMAP_MODEL_PROVIDER=dev` (`dev-adapter.ts`),
+   and the per-role router (`model-router.ts`). The Anthropic adapter was
+   deliberately not built (no key; unexercised code). Frontend suite:
+   **118/118 pass**; typecheck clean. Zero live model calls — every test is
+   offline.
 
 ## API keys (the question everyone asks next)
 
@@ -69,11 +80,12 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 
 ## What's next, in order
 
-1. Model client layer (`frontend/lib/readmap/models/`): Gemini adapter over
-   plain `fetch`; a clearly-labelled dev adapter that fails closed outside
-   `APP_ENV=development`.
+1. ~~Model client layer (`frontend/lib/readmap/models/`)~~ — **done, increment
+   2**: Gemini adapter over plain `fetch`; a clearly-labelled dev adapter that
+   fails closed outside `APP_ENV=development`; per-role model routing.
 2. Agent skeletons — Mapper, Signal Extractor, Skeptic, Compressor — with
-   Zod contracts and versioned prompts under `frontend/lib/readmap/prompts/`.
+   Zod contracts and versioned prompts under `frontend/lib/readmap/prompts/`
+   (increment 3).
 3. Grounding gate: citation resolution, tier nesting, interpretation
    separation (numeric checks land in READMAP Phase 3).
 4. Routes (`frontend/app/api/readmap/*`) and UI (`frontend/app/readmap/`,
@@ -111,4 +123,5 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 |---|---|---|
 | 2026-09-13 | Phase 0: audit docs, owner decisions, charter scoping (D-016), control files | 790bb53 |
 | 2026-09-13 | Phase 1 increment 1: evidence schemas + segmenter + 13 tests (89/89 green, typecheck clean) | 8a55fb7 |
-| 2026-09-13 | Session handoff document; branch pushed; PR opened | (this commit) |
+| 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | (this commit) |
+| 2026-09-13 | Session handoff document; branch pushed; PR opened | (earlier commit) |

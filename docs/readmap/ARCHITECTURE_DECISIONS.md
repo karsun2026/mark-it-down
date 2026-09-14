@@ -245,6 +245,21 @@ verified to exist during the Phase 0 audit on 2026-09-13.
 - **Files affected:** New `frontend/lib/readmap/models/*`, `frontend/package.json`.
 - **Evaluation coverage:** Contract tests: provider structured output; dev
   adapter fail-closed test outside development.
+- **Update (2026-09-13, increment 2 build):** The model layer was implemented
+  per this decision — `models/client.ts` (the spec §5
+  `StructuredModelClient` contract), `models/gemini.ts` (plain-`fetch`
+  adapter, no SDK; `responseMimeType` JSON with a responseSchema pruned to
+  Gemini's supported subset; one schema-repair attempt per spec §10; usage
+  accounting across attempts), `models/dev-adapter.ts` (the labelled dev
+  adapter: gated on `READMAP_MODEL_PROVIDER=dev` **and** `APP_ENV=development`,
+  fail-closed, serving only pre-registered fixtures — never inventing output),
+  and `models/model-router.ts` (per-role model ids from
+  `READMAP_EXTRACTION_MODEL` / `READMAP_VERIFICATION_MODEL` /
+  `READMAP_COMPRESSION_MODEL`; honest config errors for unconfigured or
+  unsupported providers). **The Anthropic adapter was deliberately NOT built**
+  in this increment: no key exists, and shipping an unexercised adapter would
+  be untested code. The contract is provider-neutral, so adding it later
+  behind the same interface needs no agent changes.
 - **Update (2026-09-13, owner input):** Available keys are **Gemini** (in use
   on the market-intel suite) and **Perplexity**. Phase 1 uses the **Gemini
   adapter only**. Perplexity is **excluded from all agent roles**: its API is
