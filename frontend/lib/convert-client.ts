@@ -236,6 +236,13 @@ async function runConversion(
   signal: AbortSignal,
   onStage?: (status: JobStatus) => void,
 ): Promise<string[]> {
+  // Its own controller so the race can cancel it without cancelling the job.
+  // Declared first: a definitive refusal from the convert POST aborts the poll
+  // (see below).
+  const pollAbort = new AbortController();
+  if (signal.aborted) pollAbort.abort();
+  else signal.addEventListener("abort", () => pollAbort.abort(), { once: true });
+
   const convertRequest = fetch("/converter/v1/convert", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -250,16 +257,20 @@ async function runConversion(
   })
     .then(async (response) => {
       if (!response.ok) {
+        // A 4xx is a DEFINITIVE refusal (bad/expired token, malformed
+        // request): the converter will never process this job, so the poll
+        // can never succeed. Abort it and fail now instead of waiting out the
+        // poll's twelve-minute window in silence. 5xx and network errors keep
+        // the old behaviour — a proxy may have dropped the POST while the
+        // job still completes and the poll observes it.
+        if (response.status >= 400 && response.status < 500) {
+          pollAbort.abort();
+        }
         throw await readApiError(response, "CONVERSION_FAILED");
       }
       const body = (await response.json()) as ConvertResponse;
       return body.warnings ?? [];
     });
-
-  // Its own controller so the race can cancel it without cancelling the job.
-  const pollAbort = new AbortController();
-  if (signal.aborted) pollAbort.abort();
-  else signal.addEventListener("abort", () => pollAbort.abort(), { once: true });
 
   const polling = pollStatus(job.statusGetUrl, pollAbort.signal, onStage).then((status) => {
     if (!status.ok) {
