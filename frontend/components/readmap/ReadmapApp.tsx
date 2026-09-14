@@ -21,6 +21,7 @@ import { FileDropzone } from "@/components/FileDropzone";
 import { validateSelection, formatBytes } from "@/lib/filename";
 import {
   runReadmapFlow,
+  checkConverterAvailable,
   ReadmapFlowError,
   type ReadmapOutcome,
 } from "@/lib/readmap/readmap-client";
@@ -32,6 +33,7 @@ export default function ReadmapApp() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [stageLabel, setStageLabel] = useState<string>("");
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [outcome, setOutcome] = useState<ReadmapOutcome | null>(null);
   const [preset, setPreset] = useState<CompressionPreset>("READMAP");
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
@@ -56,13 +58,36 @@ export default function ReadmapApp() {
     setFile(selected);
     setPhase("working");
     setStageLabel("Preparing");
+    setUploadPercent(null);
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      // Fail fast (seconds) when the converter service is not running,
+      // instead of a twelve-minute silent wait on the status poll.
+      const converterUp = await checkConverterAvailable(controller.signal);
+      if (!converterUp) {
+        setError({
+          code: "SERVICE_UNAVAILABLE",
+          message:
+            "The document converter service is not running. In another terminal, start it with: powershell -File run-converter-local.ps1 — then restart this dev server (npm run dev) and try again.",
+        });
+        setPhase("error");
+        return;
+      }
+
       const result = await runReadmapFlow(selected, controller.signal, {
-        onStage: setStageLabel,
+        onStage: (label) => {
+          setStageLabel(label);
+          // The converter's own stages mean the upload has finished.
+          if (label !== "Preparing") setUploadPercent(null);
+        },
+        onUploadProgress: (percentage) => {
+          setUploadPercent(percentage);
+          setStageLabel(`Uploading your document… ${percentage}%`);
+        },
       });
+      setUploadPercent(null);
       setOutcome(result);
       setPhase("done");
     } catch (e) {

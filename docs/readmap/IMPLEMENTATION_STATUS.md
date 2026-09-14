@@ -104,6 +104,25 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
   request timeout — the result route is the authority, and a retry re-uses or
   re-runs honestly.
 
+## Local runbook (development only)
+
+The browser POSTs conversions to `/converter/v1/convert` on its own origin.
+Production routes that path to the converter container via `vercel.json`;
+`next dev` has no such route. To run the full READMAP flow locally:
+
+1. `frontend/.env.local` sets `MARK_IT_DOWN_BASE_URL=http://localhost:8000`
+   (added this session) — `next.config.ts` proxies `/converter/*` to it, only
+   when the variable is set, only in dev. Production behaviour is unchanged.
+2. Start the converter with `run-converter-local.ps1` (repo root) in a second
+   terminal — it injects the matching `JOB_SIGNING_SECRET` from
+   `frontend/.env.local` into the converter process (the token check fails
+   otherwise) and warns if pandoc is missing (DOCX only; PDF/PPTX need none).
+3. `npm run dev` (restart required after config/env changes).
+4. The UI now pre-flights `/converter/health` and fails in seconds with the
+   fix in the message if the converter is down — the twelve-minute silent
+   status-poll wait is no longer reachable from the READMAP page. Upload
+   progress is shown during the direct-to-Blob upload.
+
 ## Development-only adapters or mocks
 
 | Adapter | Purpose | Production blocked? | Removal condition |

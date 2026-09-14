@@ -28,6 +28,7 @@ export interface ReadmapOutcome {
 
 export interface ReadmapFlowCallbacks {
   onStage?: (label: string) => void;
+  onUploadProgress?: (percentage: number) => void;
 }
 
 export class ReadmapFlowError extends Error {
@@ -118,6 +119,8 @@ export async function runReadmapFlow(
 ): Promise<ReadmapOutcome> {
   const outcome = await convertDocument(file, false, signal, {
     onStage: (status) => callbacks.onStage?.(READMAP_STAGE_LABEL[status.stage] ?? "Working"),
+    onUploadProgress: (percentage) =>
+      callbacks.onUploadProgress?.(percentage),
   });
 
   const { jobToken, resultPathname } = outcome;
@@ -169,6 +172,28 @@ function labelFor(status: ReadMapStatusV1): string {
     return `${base} (${status.unitsDone}/${status.unitsTotal})`;
   }
   return base;
+}
+
+/**
+ * Fail fast when the converter service is not reachable (local development).
+ *
+ * The conversion POST races a status poll that tolerates a missing status
+ * object for up to twelve minutes — correct in production, where the
+ * /converter/* route always exists, but locally a missing converter meant
+ * twelve silent minutes. /converter/health answers in milliseconds when the
+ * service is up, so a failed check here is an immediate, actionable error
+ * instead of a long silence.
+ */
+export async function checkConverterAvailable(signal: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch("/converter/health", {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 interface StartResponse {
