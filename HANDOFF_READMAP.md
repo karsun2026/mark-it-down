@@ -57,6 +57,14 @@ continues the build.
    supplied evidence, pipeline-assigned signal ids, bounded
    cited+nearby-only skeptic input, and enforced tier nesting. Frontend
    suite: **150/150 pass**; typecheck clean; zero live model calls.
+7. **Phase 1, increment 4 shipped**: the orchestration pipeline
+   (`orchestration/pipeline.ts` + `stages.ts`) and the deterministic
+   grounding gate (`grounding/claim-parser|citation-validator|numeric-guard|
+   grounding-gate.ts`), plus `ReadMapV1`/status schemas. Evidence snapshot is
+   persisted before any model call; units carry idempotency keys; gate
+   enforces spec §11 items 1–3 and 5–10 with §11.4 explicitly deferred to
+   Phase 3 (ADR-009); repair is by omission, one round. Frontend suite:
+   **162/162 pass**; typecheck clean; zero live model calls.
 
 ## API keys (the question everyone asks next)
 
@@ -94,10 +102,13 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 2. ~~Agent skeletons — Mapper, Signal Extractor, Skeptic, Compressor — with
    Zod contracts and versioned prompts~~ — **done, increment 3**
    (`frontend/lib/readmap/agents/` + `frontend/lib/readmap/prompts/`).
-3. Orchestration pipeline + deterministic grounding gate (spec §11 items 1–3,
-   5–10; numeric checks land in READMAP Phase 3).
+3. ~~Grounding gate~~ — **done, increment 4**: deterministic gate over spec
+   §11 items 1–3 and 5–10; §11.4 deferred to Phase 3 and never silently
+   passed. The orchestration pipeline sequences all agents with idempotency
+   keys and honest stage status.
 4. Routes (`frontend/app/api/readmap/*`) and UI (`frontend/app/readmap/`,
-   `frontend/components/readmap/`) — every route calls `requireSession`.
+   `frontend/components/readmap/`) — every route calls `requireSession`; Blob
+   artifact persistence per ADR-004 (increment 5).
 5. Eval-harness wiring + the full acceptance-check run from
    `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md` §9 (including the 336
    Python tests and the production build). Then the independent Phase 1
@@ -132,5 +143,6 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 | 2026-09-13 | Phase 0: audit docs, owner decisions, charter scoping (D-016), control files | 790bb53 |
 | 2026-09-13 | Phase 1 increment 1: evidence schemas + segmenter + 13 tests (89/89 green, typecheck clean) | 8a55fb7 |
 | 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | 08447dd |
-| 2026-09-13 | Phase 1 increment 3: agent skeletons — signal schema, versioned prompts, 4 agents with deterministic contract checks + 32 tests (150/150 green, typecheck clean) | (this commit) |
+| 2026-09-13 | Phase 1 increment 3: agent skeletons — signal schema, versioned prompts, 4 agents with deterministic contract checks + 32 tests (150/150 green, typecheck clean) | cd285a9 |
+| 2026-09-13 | Phase 1 increment 4: orchestration pipeline + grounding gate — ReadMap/status schemas, evidence-first persistence, idempotency keys, gate with numeric deferral + 12 tests (162/162 green, typecheck clean) | (this commit) |
 | 2026-09-13 | Session handoff document; branch pushed; PR opened | (earlier commit) |

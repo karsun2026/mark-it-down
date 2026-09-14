@@ -37,6 +37,23 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
   into page/slide-anchored evidence blocks behind the Zod-validated
   `ConvertedDocumentV1` contract (`frontend/lib/readmap/schemas/evidence.ts`);
   13 tests pin it to the converter's real output grammar.
+- READMAP orchestration + grounding gate (Phase 1, fourth increment): the
+  pipeline (`frontend/lib/readmap/orchestration/`) sequences mapper →
+  extractor → skeptic → compressor over one `ConvertedDocumentV1`, persists
+  the immutable evidence snapshot BEFORE any model call, runs every unit
+  under an idempotency key derived from (checksum, pipeline version, stage,
+  unit id), assigns globally-unique signal ids, publishes honest fixed stage
+  markers (SEGMENTING…GROUNDING, terminal READY | PARTIAL_READY | FAILED),
+  caps candidate signals with a visible warning, and assembles the
+  `ReadMapV1` result deterministically from verified signals, tiers, and the
+  map. The grounding gate (`frontend/lib/readmap/grounding/`) enforces spec
+  §11 items 1–3 and 5–10 in code — citation resolution, no unsupported
+  signals, interpretation separation, tier nesting, coverage honesty,
+  recommendation targets, numeric preservation in renderings — with §11.4
+  (independent numeric validation) explicitly DEFERRED to Phase 3 and never
+  silently passed; gate failures are repaired by omission, at most one
+  round, and an unrepairable thePoint fails the job. 12 tests (162/162
+  total); typecheck clean; zero live model calls.
 - READMAP agent skeletons (Phase 1, third increment): Zod agent contracts
   (`frontend/lib/readmap/schemas/signal.ts` — DocumentMap, candidate signals,
   skeptic verdicts, nested compression tiers), four versioned system prompts
@@ -62,14 +79,13 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
 
 ## What does not work yet
 
-- No READMAP routes, UI, or orchestration pipeline exists yet — the agents are
-  standalone units with no caller. Nothing is user-facing.
-- No verified-signal store yet: verdicts are produced per unit; the pipeline
-  that sequences mapper → extractor → skeptic → compressor and persists
-  artifacts (plan §5) is the next increment.
-- No live model call has ever been made: every adapter/agent test runs offline
-  against a scripted client or registered fixtures. Zero tokens spent.
-- No database, no queue, no OCR, no vision.
+- No READMAP routes or UI exist yet — the pipeline runs as a library unit
+  with injected hooks; nothing is reachable from the browser. Blob artifact
+  persistence (ADR-004) is wired as an injectable hook, not yet connected.
+- No live model call has ever been made: every test runs offline against a
+  scripted client. Zero tokens spent.
+- No database, no queue, no OCR, no vision; numeric checks deferred to
+  READMAP Phase 3 by plan §8.
 
 ## Development-only adapters or mocks
 
@@ -109,7 +125,8 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | New segmentation tests | 13/13 pass | 2026-09-13 | `frontend/lib/readmap/ingestion/segment.test.ts` |
 | New model-layer tests | 29/29 pass (11 gemini, 9 dev-adapter, 9 model-router) | 2026-09-13 | `frontend/lib/readmap/models/*.test.ts` |
 | New agent-layer tests | 32/32 pass (12 contract, 5 extractor, 8 skeptic, 3 mapper, 4 compressor) | 2026-09-13 | `frontend/lib/readmap/agents/*.test.ts` |
-| Frontend suite re-run | 150/150 pass — no regressions | 2026-09-13 | `npm run test` |
+| New grounding/pipeline tests | 12/12 pass (8 gate, 3 pipeline, 1 chunking) | 2026-09-13 | `frontend/lib/readmap/grounding/*.test.ts`, `frontend/lib/readmap/orchestration/pipeline.test.ts` |
+| Frontend suite re-run | 162/162 pass — no regressions | 2026-09-13 | `npm run test` |
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
@@ -130,15 +147,16 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 
 ## Next approved task
 
-**Phase 1, increment 4 — orchestration + grounding gate**: the pipeline
-(`frontend/lib/readmap/orchestration/`) sequencing mapper → extractor →
-skeptic → compressor over `ConvertedDocumentV1` with stage idempotency keys
-(checksum, pipeline version, stage, unit id) and honest stage status, plus the
-deterministic grounding gate (`frontend/lib/readmap/grounding/`) enforcing
-spec §11 items 1–3 and 5–10 (numeric check item 4 explicitly deferred to
-Phase 3 and must not silently pass). Work stays on `feature/readmap-mvp`.
-Keys go only in `frontend/.env.local` and this Vercel project's env settings
-— never committed.
+**Phase 1, increment 5 — routes, UI, and artifact persistence**: wire the
+pipeline to Blob per ADR-004 (`evidence.v1.json`, `signals.v1.json`,
+`readmap.v1.json`, `status.v1.json` under `jobs/<date>/<job-id>/readmap/`,
+written under READMAP's own retention), the five API routes
+(`app/api/readmap/prepare|start|status|result|evidence/[signalId]`, each with
+`requireSession` + rate limiting on start), and the `/readmap` page with
+upload, honest processing view, depth slider (precomputed tiers — zero model
+calls on move), evidence drawer. Then the full Phase 1 acceptance run
+(plan §9, including the 336 Python tests and the production build) before the
+independent review. Work stays on `feature/readmap-mvp`.
 
 ## Handoff note
 

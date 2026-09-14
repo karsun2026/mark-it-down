@@ -356,5 +356,48 @@ verified to exist during the Phase 0 audit on 2026-09-13.
 - **Evaluation coverage:** 32 offline agent/contract tests; tier-nesting and
   citation-resolution tests feed acceptance checks 7–8 at Phase 1 exit.
 
+## ADR-009 — Pipeline orchestration, gate repair by omission, and numeric deferral
+
+- **Status:** Implemented (Phase 1, increment 4, 2026-09-13)
+- **Date:** 2026-09-13
+- **Decision owner:** READMAP build
+- **Problem:** Spec §14 requires stage checkpoints and idempotent units; §11
+  requires a deterministic grounding gate before anything is displayed; Phase
+  1 has no database/queue (ADR-002/004) and no independent numeric validation
+  until Phase 3 (plan §8).
+- **Decision:**
+  1. `orchestration/pipeline.ts` sequences the four agents over one
+     `ConvertedDocumentV1`, using injected `getClient` (model router),
+     `onStage` (D-002-style honest status), and `persistArtifact` (Blob later)
+     hooks — the library stays route-agnostic and testable offline.
+  2. `evidence.v1.json` is persisted before any model call (plan §5). Every
+     unit runs under `deriveStageKey(checksum, PIPELINE_VERSION, stage, unit)`.
+     Signal ids are re-assigned globally after extraction so they are unique
+     per document, never per chunk.
+  3. Gate failures are repaired by omission (drop the located entry), at most
+     one round; an unrepairable `thePoint` fails the job. Truthful terminal
+     states: READY (gate passed, full coverage), PARTIAL_READY (limitations
+     surfaced), FAILED.
+  4. §11.4 independent numeric validation is DEFERRED to Phase 3: numbers are
+     preserved verbatim via `OutputNumber.numericStatus = UNVERIFIED_PHASE_1`,
+     the gate reports `NUMERIC_INDEPENDENT_VALIDATION_DEFERRED_TO_PHASE_3` in
+     `deferredChecks`, and the UI must not label Phase 1 numbers "verified".
+- **Why:** Keeps §11 enforceable deterministically without pretending §11.4 is
+  done; keeps the pipeline resumable-by-key without new infrastructure.
+- **Consequences:** Coverage ratio below 0.95 or any converter warning yields
+  PARTIAL_READY, not READY — visible honesty over quiet success.
+- **Security/privacy impact:** Status/failed messages carry shape only; no
+  document content in logs (rule 16).
+- **Cost/latency impact:** Bounded units — `MAX_BLOCKS_PER_CHUNK` and
+  `MAX_CANDIDATE_SIGNALS` caps with disclosed warnings; budget accumulates
+  every call's usage.
+- **Reversal or migration path:** Persist/status hooks are injectable; Blob
+  wiring lands in increment 5 without pipeline changes.
+- **Files affected:** `frontend/lib/readmap/schemas/readmap.ts`,
+  `status.ts`, `signal.ts` (VerifiedSignalV1), `grounding/*`,
+  `orchestration/*` (new).
+- **Evaluation coverage:** 12 new offline tests; gate checks feed acceptance
+  checks 6–8 at Phase 1 exit.
+
 
 

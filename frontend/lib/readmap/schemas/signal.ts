@@ -155,3 +155,30 @@ export const CompressedTiersV1Schema = z.object({
   }),
 });
 export type CompressedTiersV1 = z.infer<typeof CompressedTiersV1Schema>;
+
+/**
+ * A candidate signal after the Skeptic's verdict. `effectiveClaim` is the
+ * claim the pipeline may use downstream: the repaired claim for PARTIAL
+ * verdicts, the original otherwise. UNSUPPORTED/CONTRADICTED signals are kept
+ * (recorded honestly in signals.v1.json) but are never usable downstream.
+ */
+export const VerifiedSignalV1Schema = CandidateSignalV1Schema.extend({
+  skepticVerdict: VerdictSchema,
+  explanationCode: z.string().min(1),
+  explanation: z.string().min(1),
+  repairedClaim: z.string().optional(),
+});
+export type VerifiedSignalV1 = z.infer<typeof VerifiedSignalV1Schema>;
+
+/** Whether a verified signal may feed compression/gating. */
+export function isUsableSignal(signal: VerifiedSignalV1): boolean {
+  return signal.skepticVerdict === "SUPPORTED" || signal.skepticVerdict === "PARTIAL";
+}
+
+/** The claim text the pipeline may render downstream (repaired when PARTIAL). */
+export function effectiveClaim(signal: VerifiedSignalV1): string {
+  if (signal.skepticVerdict === "PARTIAL") {
+    return signal.repairedClaim ?? signal.claim;
+  }
+  return signal.claim;
+}
