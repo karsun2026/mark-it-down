@@ -316,5 +316,45 @@ verified to exist during the Phase 0 audit on 2026-09-13.
 - **Evaluation coverage:** E2E test from the suite origin (CORS behaviour
   already precedented by the Mark It Down tile).
 
+## ADR-008 — Agent layer: versioned prompts as TS modules and deterministic contract checks
+
+- **Status:** Implemented (Phase 1, increment 3, 2026-09-13)
+- **Date:** 2026-09-13
+- **Decision owner:** READMAP build
+- **Problem:** Spec §24 requires versioned prompt files, not scattered string
+  literals; the Phase 1 plan sketched raw `.md` assets. Raw `.md` files are
+  not bundle-guaranteed in a Next.js deployment without new build
+  configuration, and a missing prompt file at runtime would be a silent
+  failure mode.
+- **Decision:**
+  1. Agent system prompts live as one reviewed TypeScript module each
+     (`frontend/lib/readmap/prompts/mapper.ts`, `signal-extractor.ts`,
+     `skeptic.ts`, `compressor.ts`) exporting a version constant
+     (`*.v1`) and the prompt text. Same properties as `.md` files — separate,
+     versioned, diffable — plus guaranteed presence in the deployed bundle.
+  2. Contracts Zod cannot express are enforced deterministically beside the
+     agents (`agents/contract.ts`): extractor citations must resolve to the
+     supplied evidence with verbatim (whitespace-insensitive) quotes; signal
+     ids are assigned by the pipeline, never the model; the skeptic receives
+     only cited + bounded nearby evidence; compressor selections must resolve
+     to verified signals and tiers must nest (spec §10.5). A violation throws
+     `AgentContractError` — the unit fails, nothing is silently repaired.
+  3. Agents depend only on `StructuredModelClient` (increment 2); no agent
+     imports a provider module.
+- **Why:** Keeps the honesty rules (8, 9, 13) enforceable in code rather than
+  trusting prompt compliance; keeps the bundling surface dependency-free.
+- **Consequences:** Prompt edits are code reviews; prompt version constants
+  must move in lockstep with content changes (recorded in each agent run).
+- **Security/privacy impact:** Error messages carry ids/counts only (rule 16);
+  evidence text is never embedded in errors or logs.
+- **Cost/latency impact:** Skeptic context is bounded (`NEARBY_CONTEXT_LIMIT`)
+  to keep per-verdict cost linear and capped.
+- **Reversal or migration path:** Prompts could move to `.md` + build step
+  later without changing agent code (only the prompt modules change).
+- **Files affected:** `frontend/lib/readmap/schemas/signal.ts`,
+  `frontend/lib/readmap/prompts/*`, `frontend/lib/readmap/agents/*` (new).
+- **Evaluation coverage:** 32 offline agent/contract tests; tier-nesting and
+  citation-resolution tests feed acceptance checks 7–8 at Phase 1 exit.
+
 
 

@@ -49,6 +49,14 @@ continues the build.
    deliberately not built (no key; unexercised code). Frontend suite:
    **118/118 pass**; typecheck clean. Zero live model calls — every test is
    offline.
+6. **Phase 1, increment 3 shipped**: the agent skeletons — Zod contracts
+   (`schemas/signal.ts`), versioned prompts as TS modules
+   (`prompts/mapper|signal-extractor|skeptic|compressor.ts`, ADR-008), and
+   thin agents (`agents/mapper|signal-extractor|skeptic|compressor.ts`) with
+   deterministic contract checks: verbatim-quote citations resolved against
+   supplied evidence, pipeline-assigned signal ids, bounded
+   cited+nearby-only skeptic input, and enforced tier nesting. Frontend
+   suite: **150/150 pass**; typecheck clean; zero live model calls.
 
 ## API keys (the question everyone asks next)
 
@@ -83,11 +91,11 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 1. ~~Model client layer (`frontend/lib/readmap/models/`)~~ — **done, increment
    2**: Gemini adapter over plain `fetch`; a clearly-labelled dev adapter that
    fails closed outside `APP_ENV=development`; per-role model routing.
-2. Agent skeletons — Mapper, Signal Extractor, Skeptic, Compressor — with
-   Zod contracts and versioned prompts under `frontend/lib/readmap/prompts/`
-   (increment 3).
-3. Grounding gate: citation resolution, tier nesting, interpretation
-   separation (numeric checks land in READMAP Phase 3).
+2. ~~Agent skeletons — Mapper, Signal Extractor, Skeptic, Compressor — with
+   Zod contracts and versioned prompts~~ — **done, increment 3**
+   (`frontend/lib/readmap/agents/` + `frontend/lib/readmap/prompts/`).
+3. Orchestration pipeline + deterministic grounding gate (spec §11 items 1–3,
+   5–10; numeric checks land in READMAP Phase 3).
 4. Routes (`frontend/app/api/readmap/*`) and UI (`frontend/app/readmap/`,
    `frontend/components/readmap/`) — every route calls `requireSession`.
 5. Eval-harness wiring + the full acceptance-check run from
@@ -123,5 +131,6 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 |---|---|---|
 | 2026-09-13 | Phase 0: audit docs, owner decisions, charter scoping (D-016), control files | 790bb53 |
 | 2026-09-13 | Phase 1 increment 1: evidence schemas + segmenter + 13 tests (89/89 green, typecheck clean) | 8a55fb7 |
-| 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | (this commit) |
+| 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | 08447dd |
+| 2026-09-13 | Phase 1 increment 3: agent skeletons — signal schema, versioned prompts, 4 agents with deterministic contract checks + 32 tests (150/150 green, typecheck clean) | (this commit) |
 | 2026-09-13 | Session handoff document; branch pushed; PR opened | (earlier commit) |

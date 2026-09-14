@@ -37,6 +37,19 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
   into page/slide-anchored evidence blocks behind the Zod-validated
   `ConvertedDocumentV1` contract (`frontend/lib/readmap/schemas/evidence.ts`);
   13 tests pin it to the converter's real output grammar.
+- READMAP agent skeletons (Phase 1, third increment): Zod agent contracts
+  (`frontend/lib/readmap/schemas/signal.ts` — DocumentMap, candidate signals,
+  skeptic verdicts, nested compression tiers), four versioned system prompts
+  (`frontend/lib/readmap/prompts/`), and thin agent units
+  (`frontend/lib/readmap/agents/` — mapper, signal-extractor, skeptic,
+  compressor) that consume the model layer only via `StructuredModelClient`.
+  Deterministic contract checks pin the honesty properties: extractor
+  citations must resolve to supplied evidence with verbatim quotes; signal
+  ids are pipeline-assigned (`s0001`…), never model output; the skeptic sees
+  only cited + bounded nearby evidence; compressor selections must resolve to
+  verified signals and tiers must nest
+  (`ONE_THING ⊆ BRUTAL ⊆ QUICK_SCAN ⊆ BRIEF ⊆ READMAP ⊆ DEEP_DIVE`). 32
+  offline tests (150/150 total); typecheck clean; zero live model calls.
 - READMAP model client layer (Phase 1, second increment): the spec §5
   `StructuredModelClient` contract (`frontend/lib/readmap/models/client.ts`),
   a Gemini adapter over plain `fetch` — no provider SDK — with Zod-validated
@@ -49,10 +62,13 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
 
 ## What does not work yet
 
-- No READMAP routes, UI, or agent pipeline exists yet — the model client layer
-  has no consumers. Nothing is user-facing.
-- No live model call has ever been made: every adapter test runs offline
-  against a faked `fetch` seam or registered fixtures. Zero tokens spent.
+- No READMAP routes, UI, or orchestration pipeline exists yet — the agents are
+  standalone units with no caller. Nothing is user-facing.
+- No verified-signal store yet: verdicts are produced per unit; the pipeline
+  that sequences mapper → extractor → skeptic → compressor and persists
+  artifacts (plan §5) is the next increment.
+- No live model call has ever been made: every adapter/agent test runs offline
+  against a scripted client or registered fixtures. Zero tokens spent.
 - No database, no queue, no OCR, no vision.
 
 ## Development-only adapters or mocks
@@ -92,7 +108,8 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | Existing frontend suite re-run | 76/76 pass — no regressions | 2026-09-13 | `npm run test` |
 | New segmentation tests | 13/13 pass | 2026-09-13 | `frontend/lib/readmap/ingestion/segment.test.ts` |
 | New model-layer tests | 29/29 pass (11 gemini, 9 dev-adapter, 9 model-router) | 2026-09-13 | `frontend/lib/readmap/models/*.test.ts` |
-| Frontend suite re-run | 118/118 pass — no regressions | 2026-09-13 | `npm run test` |
+| New agent-layer tests | 32/32 pass (12 contract, 5 extractor, 8 skeptic, 3 mapper, 4 compressor) | 2026-09-13 | `frontend/lib/readmap/agents/*.test.ts` |
+| Frontend suite re-run | 150/150 pass — no regressions | 2026-09-13 | `npm run test` |
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
@@ -113,15 +130,15 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 
 ## Next approved task
 
-**Phase 1, increment 3 — agent skeletons** (Mapper, Signal Extractor,
-Skeptic, Compressor) under `frontend/lib/readmap/agents/`, with Zod
-contracts and versioned prompts under `frontend/lib/readmap/prompts/`,
-consuming the model client layer via `model-router.getClientForTask`
-(grounding gate and numeric checks follow in their planned increments).
-Work stays on `feature/readmap-mvp`; all owner approvals recorded 2026-09-13
-(ADR-001 scoped, ADR-004, ADR-006 Gemini-only, ADR-007). Keys go only in
-`frontend/.env.local` and this Vercel project's env settings — never
-committed.
+**Phase 1, increment 4 — orchestration + grounding gate**: the pipeline
+(`frontend/lib/readmap/orchestration/`) sequencing mapper → extractor →
+skeptic → compressor over `ConvertedDocumentV1` with stage idempotency keys
+(checksum, pipeline version, stage, unit id) and honest stage status, plus the
+deterministic grounding gate (`frontend/lib/readmap/grounding/`) enforcing
+spec §11 items 1–3 and 5–10 (numeric check item 4 explicitly deferred to
+Phase 3 and must not silently pass). Work stays on `feature/readmap-mvp`.
+Keys go only in `frontend/.env.local` and this Vercel project's env settings
+— never committed.
 
 ## Handoff note
 
