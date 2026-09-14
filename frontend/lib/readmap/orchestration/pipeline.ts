@@ -441,6 +441,7 @@ export async function runReadmapPipeline(
     });
     addUsage(usage, compressorRun.result.usage);
     const tiers = compressorRun.result.value;
+    await persist(input.persistArtifact, "tiers.v1.json", tiers);
 
     // GROUNDING — assemble deterministically, gate, repair by omission once.
     currentStage = "GROUNDING"; publish("GROUNDING");

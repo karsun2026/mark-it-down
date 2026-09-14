@@ -1,0 +1,180 @@
+/**
+ * Browser-side READMAP flow: convert (existing Mark It Down path), then
+ * analyse. Reuses `convertDocument` unchanged (rule 3) — READMAP is a second
+ * consumer of the same conversion, never a second converter.
+ *
+ * The depth slider runs entirely client-side over precomputed tiers: moving
+ * it must never fetch (plan acceptance check 11 asserts no network call on
+ * slider move).
+ */
+
+import { convertDocument } from "@/lib/convert-client";
+import type { ReadMapV1 } from "@/lib/readmap/schemas/readmap";
+import type { CompressedTiersV1 } from "@/lib/readmap/schemas/signal";
+import type { ReadMapStatusV1 } from "@/lib/readmap/schemas/status";
+
+export type { ReadMapStatusV1 };
+
+export interface ReadmapOutcome {
+  status: "READY" | "PARTIAL_READY";
+  jobId: string;
+  /** Kept so the evidence drawer can resolve citations server-side. */
+  jobToken: string;
+  resultPathname: string;
+  readmap: ReadMapV1;
+  tiers: CompressedTiersV1 | null;
+  warnings: string[];
+}
+
+export interface ReadmapFlowCallbacks {
+  onStage?: (label: string) => void;
+}
+
+export class ReadmapFlowError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "ReadmapFlowError";
+    this.code = code;
+  }
+}
+
+/** Reader-facing labels, deliberately plain (spec §12: no agent jargon). */
+export const READMAP_STAGE_LABEL: Record<string, string> = {
+  STARTING: "Analysis starting",
+  SEGMENTING: "Reading the document structure",
+  MAPPING: "Mapping the document",
+  EXTRACTING: "Extracting candidate signals",
+  VERIFYING: "Checking every claim against its evidence",
+  COMPRESSING: "Building the reading depths",
+  GROUNDING: "Verifying citations",
+  READY: "Done",
+  PARTIAL_READY: "Done, with limitations",
+  FAILED: "Failed",
+  // Conversion stages reuse the converter's reader wording.
+  accepted: "Preparing",
+  downloading: "Reading your document",
+  validating: "Checking the document",
+  converting: "Converting to Markdown",
+  packaging: "Building your Markdown",
+  uploading: "Saving the result",
+  complete: "Analysis starting",
+  failed: "Failed",
+};
+
+async function readApiError(response: Response): Promise<ReadmapFlowError> {
+  try {
+    const body = (await response.json()) as { code?: string; message?: string };
+    if (body?.code && body?.message) return new ReadmapFlowError(body.code, body.message);
+  } catch {
+    // fall through
+  }
+  return new ReadmapFlowError(
+    "SERVICE_UNAVAILABLE",
+    "Something went wrong. Please try again.",
+  );
+}
+
+async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!response.ok) throw await readApiError(response);
+  return (await response.json()) as T;
+}
+
+export interface EvidenceResponse {
+  signal: {
+    id: string;
+    claim: string;
+    type: string;
+    verdict: string;
+    explanation: string;
+    epistemicStatus: string;
+    warnings: string[];
+  };
+  evidence: {
+    id: string;
+    normalizedText: string;
+    pageNumber?: number;
+    slideNumber?: number;
+    sectionPath: string[];
+  }[];
+}
+
+/**
+ * Convert, then analyse. Stages stream through `onStage` — conversion stages
+ * from the converter's status object, READMAP stages polled from Blob while
+ * the start request runs. The start request itself is the authority; polling
+ * failures are transient and ignored.
+ */
+export async function runReadmapFlow(
+  file: File,
+  signal: AbortSignal,
+  callbacks: ReadmapFlowCallbacks = {},
+): Promise<ReadmapOutcome> {
+  const outcome = await convertDocument(file, false, signal, {
+    onStage: (status) => callbacks.onStage?.(READMAP_STAGE_LABEL[status.stage] ?? "Working"),
+  });
+
+  const { jobToken, resultPathname } = outcome;
+  const pollTimer = window.setInterval(() => {
+    void postJson<ReadMapStatusV1>("/api/readmap/status", { jobToken, resultPathname }, signal)
+      .then((status) => callbacks.onStage?.(labelFor(status)))
+      .catch(() => {
+        /* transient poll failures are normal; the start request decides */
+      });
+  }, 2500);
+
+  try {
+    const response = await postJson<StartResponse>("/api/readmap/start", {
+      jobToken,
+      resultPathname,
+      originalFilename: file.name,
+    }, signal);
+    return {
+      status: response.status,
+      jobId: response.jobId,
+      jobToken,
+      resultPathname,
+      readmap: response.readmap,
+      tiers: response.tiers,
+      warnings: response.warnings,
+    };
+  } finally {
+    window.clearInterval(pollTimer);
+  }
+}
+
+/** Fetch the evidence behind one signal id (server resolves the blocks). */
+export function fetchEvidence(
+  jobToken: string,
+  resultPathname: string,
+  signalId: string,
+  signal: AbortSignal,
+): Promise<EvidenceResponse> {
+  return postJson<EvidenceResponse>(
+    `/api/readmap/evidence/${encodeURIComponent(signalId)}`,
+    { jobToken, resultPathname },
+    signal,
+  );
+}
+
+function labelFor(status: ReadMapStatusV1): string {
+  const base = READMAP_STAGE_LABEL[status.stage] ?? "Working";
+  if (status.unitsTotal > 0 && (status.stage === "EXTRACTING" || status.stage === "VERIFYING")) {
+    return `${base} (${status.unitsDone}/${status.unitsTotal})`;
+  }
+  return base;
+}
+
+interface StartResponse {
+  status: "READY" | "PARTIAL_READY";
+  jobId: string;
+  readmap: ReadMapV1;
+  tiers: CompressedTiersV1 | null;
+  warnings: string[];
+}

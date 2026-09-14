@@ -37,6 +37,21 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
   into page/slide-anchored evidence blocks behind the Zod-validated
   `ConvertedDocumentV1` contract (`frontend/lib/readmap/schemas/evidence.ts`);
   13 tests pin it to the converter's real output grammar.
+- READMAP routes, UI, and artifact persistence (Phase 1, fifth increment):
+  Blob artifact persistence per ADR-004 (`frontend/lib/readmap/artifacts.ts` —
+  evidence/signals/tiers/readmap/status .v1.json under the conversion job's
+  own `readmap/` prefix, status reads CDN-bypassed per D-005, READMAP-only
+  retention via `READMAP_RETENTION_DAYS`, default 7 days, swept by the
+  existing hourly cleanup); four routes (`app/api/readmap/start|status|
+  result|evidence/[signalId]`), each with `requireSession`, rate limiting on
+  start, and the conversion job's HMAC token verified with the exact
+  download-url binding pattern (`lib/readmap/route-access.ts`); start is an
+  idempotent POST that re-uses a completed analysis instead of re-billing.
+  UI: `/readmap` page (server-gated) with the converter flow reused for
+  conversion, honest processing stages polled from Blob, a depth slider that
+  moves between PRECOMPUTED tiers client-side (no fetch on move), and an
+  evidence drawer resolved server-side. Production build passes; 167/167
+  tests; typecheck clean; zero live model calls.
 - READMAP orchestration + grounding gate (Phase 1, fourth increment): the
   pipeline (`frontend/lib/readmap/orchestration/`) sequences mapper →
   extractor → skeptic → compressor over one `ConvertedDocumentV1`, persists
@@ -79,13 +94,15 @@ The existing Mark It Down product is complete, deployed, and §57 release-verifi
 
 ## What does not work yet
 
-- No READMAP routes or UI exist yet — the pipeline runs as a library unit
-  with injected hooks; nothing is reachable from the browser. Blob artifact
-  persistence (ADR-004) is wired as an injectable hook, not yet connected.
 - No live model call has ever been made: every test runs offline against a
-  scripted client. Zero tokens spent.
+  scripted client. Zero tokens spent. First real end-to-end run (real Gemini
+  key or the labelled dev adapter) happens in the Phase 1 acceptance run.
 - No database, no queue, no OCR, no vision; numeric checks deferred to
   READMAP Phase 3 by plan §8.
+- Known limitation (documented in plan §4): if the start route dies
+  mid-analysis, the status object stays at its last stage until the browser's
+  request timeout — the result route is the authority, and a retry re-uses or
+  re-runs honestly.
 
 ## Development-only adapters or mocks
 
@@ -126,7 +143,9 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | New model-layer tests | 29/29 pass (11 gemini, 9 dev-adapter, 9 model-router) | 2026-09-13 | `frontend/lib/readmap/models/*.test.ts` |
 | New agent-layer tests | 32/32 pass (12 contract, 5 extractor, 8 skeptic, 3 mapper, 4 compressor) | 2026-09-13 | `frontend/lib/readmap/agents/*.test.ts` |
 | New grounding/pipeline tests | 12/12 pass (8 gate, 3 pipeline, 1 chunking) | 2026-09-13 | `frontend/lib/readmap/grounding/*.test.ts`, `frontend/lib/readmap/orchestration/pipeline.test.ts` |
-| Frontend suite re-run | 162/162 pass — no regressions | 2026-09-13 | `npm run test` |
+| New artifact-layer tests | 5/5 pass (paths, job scoping, retention, sweep detection) | 2026-09-13 | `frontend/lib/readmap/artifacts.test.ts` |
+| Frontend suite re-run | 167/167 pass — no regressions | 2026-09-13 | `npm run test` |
+| Production build | Pass — /readmap + 4 READMAP routes compile | 2026-09-13 | `npm run build` |
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
@@ -147,16 +166,14 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 
 ## Next approved task
 
-**Phase 1, increment 5 — routes, UI, and artifact persistence**: wire the
-pipeline to Blob per ADR-004 (`evidence.v1.json`, `signals.v1.json`,
-`readmap.v1.json`, `status.v1.json` under `jobs/<date>/<job-id>/readmap/`,
-written under READMAP's own retention), the five API routes
-(`app/api/readmap/prepare|start|status|result|evidence/[signalId]`, each with
-`requireSession` + rate limiting on start), and the `/readmap` page with
-upload, honest processing view, depth slider (precomputed tiers — zero model
-calls on move), evidence drawer. Then the full Phase 1 acceptance run
-(plan §9, including the 336 Python tests and the production build) before the
-independent review. Work stays on `feature/readmap-mvp`.
+**Phase 1 exit — acceptance run + independent review**: the full §9 run from
+`docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md` — 336 Python converter tests,
+typecheck, full Vitest suite, production build, tier-nesting and
+citation-resolution gates, dev-adapter fail-closed behaviour, injection
+fixtures through the deterministic scorer, the honesty check on a
+scanned-like fixture, and an E2E pass with a real Gemini key or the labelled
+dev adapter. Then the independent Phase 1 review (`prompts/02_REVIEW_PHASE_
+1.md`) before Phase 2 is even discussed. Work stays on `feature/readmap-mvp`.
 
 ## Handoff note
 

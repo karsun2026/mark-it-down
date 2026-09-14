@@ -65,6 +65,16 @@ continues the build.
    enforces spec §11 items 1–3 and 5–10 with §11.4 explicitly deferred to
    Phase 3 (ADR-009); repair is by omission, one round. Frontend suite:
    **162/162 pass**; typecheck clean; zero live model calls.
+8. **Phase 1, increment 5 shipped**: routes, UI, and persistence. Blob
+   artifacts (`lib/readmap/artifacts.ts`, ADR-004 update: own retention,
+   D-005-fresh status reads, `tiers.v1.json` added so the slider never calls
+   a model); four routes with `requireSession` + token binding (the
+   download-url pattern, `route-access.ts`); `/readmap` page reusing the
+   converter flow, honest staged processing, client-side depth slider,
+   server-resolved evidence drawer. **167/167 tests, typecheck clean,
+   production build passes.** The converter path remains untouched; the
+   hourly cleanup now also sweeps READMAP artifacts under
+   `READMAP_RETENTION_DAYS`.
 
 ## API keys (the question everyone asks next)
 
@@ -106,13 +116,13 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
    §11 items 1–3 and 5–10; §11.4 deferred to Phase 3 and never silently
    passed. The orchestration pipeline sequences all agents with idempotency
    keys and honest stage status.
-4. Routes (`frontend/app/api/readmap/*`) and UI (`frontend/app/readmap/`,
-   `frontend/components/readmap/`) — every route calls `requireSession`; Blob
-   artifact persistence per ADR-004 (increment 5).
-5. Eval-harness wiring + the full acceptance-check run from
-   `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md` §9 (including the 336
-   Python tests and the production build). Then the independent Phase 1
-   review (`prompts/02_REVIEW_PHASE_1.md`) before Phase 2 is even discussed.
+4. ~~Routes + UI~~ — **done, increment 5**: `/readmap` page +
+   `app/api/readmap/{start,status,result,evidence/[signalId]}`; Blob
+   persistence per ADR-004; depth slider is model-call-free.
+5. Phase 1 exit: the full §9 acceptance run (336 Python tests, production
+   build, injection/honesty fixtures, E2E with a real key or dev adapter),
+   then the independent Phase 1 review (`prompts/02_REVIEW_PHASE_1.md`) before
+   Phase 2 is even discussed.
 
 ## Things that will bite you
 
@@ -144,5 +154,6 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 | 2026-09-13 | Phase 1 increment 1: evidence schemas + segmenter + 13 tests (89/89 green, typecheck clean) | 8a55fb7 |
 | 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | 08447dd |
 | 2026-09-13 | Phase 1 increment 3: agent skeletons — signal schema, versioned prompts, 4 agents with deterministic contract checks + 32 tests (150/150 green, typecheck clean) | cd285a9 |
-| 2026-09-13 | Phase 1 increment 4: orchestration pipeline + grounding gate — ReadMap/status schemas, evidence-first persistence, idempotency keys, gate with numeric deferral + 12 tests (162/162 green, typecheck clean) | (this commit) |
+| 2026-09-13 | Phase 1 increment 4: orchestration pipeline + grounding gate — ReadMap/status schemas, evidence-first persistence, idempotency keys, gate with numeric deferral + 12 tests (162/162 green, typecheck clean) | 07b38ec |
+| 2026-09-13 | Phase 1 increment 5: Blob artifacts + 4 routes + /readmap UI — retention sweep extended, token-verified access, slider without model calls + 5 tests (167/167 green, build green) | (this commit) |
 | 2026-09-13 | Session handoff document; branch pushed; PR opened | (earlier commit) |

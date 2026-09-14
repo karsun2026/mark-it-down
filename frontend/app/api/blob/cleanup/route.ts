@@ -11,6 +11,8 @@
 import { del, list } from "@vercel/blob";
 import { NextResponse } from "next/server";
 
+import { isReadmapArtifact, readmapRetentionMinutes } from "@/lib/readmap/artifacts";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
@@ -19,6 +21,9 @@ const MINUTE_MS = 60 * 1000;
 const SOURCE_MAX_AGE_MINUTES = envMinutes("SOURCE_BLOB_MAX_AGE_MINUTES", 60);
 const RESULT_MAX_AGE_MINUTES = envMinutes("RESULT_BLOB_MAX_AGE_MINUTES", 120);
 const STATUS_MAX_AGE_MINUTES = RESULT_MAX_AGE_MINUTES;
+// READMAP artifacts keep their own, longer retention (ADR-004; §23) so the
+// evidence behind a displayed result outlives the conversion result.
+const READMAP_MAX_AGE_MINUTES = readmapRetentionMinutes();
 
 /** §41 - bound the work per invocation so a backlog cannot run past maxDuration. */
 const MAX_DELETIONS_PER_RUN = 500;
@@ -39,6 +44,7 @@ function isAuthorized(request: Request): boolean {
 function maxAgeMinutesFor(pathname: string): number | null {
   if (pathname.includes("/source/")) return SOURCE_MAX_AGE_MINUTES;
   if (pathname.includes("/result/")) return RESULT_MAX_AGE_MINUTES;
+  if (isReadmapArtifact(pathname)) return readmapRetentionMinutes();
   if (pathname.endsWith("/status.json")) return STATUS_MAX_AGE_MINUTES;
   return null;
 }
@@ -51,7 +57,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const now = Date.now();
-  const deleted = { source: 0, result: 0, status: 0 };
+  const deleted = { source: 0, result: 0, status: 0, readmap: 0 };
   let scanned = 0;
   let cursor: string | undefined;
   let truncated = false;
@@ -72,6 +78,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         expired.push(blob.url);
         if (blob.pathname.includes("/source/")) deleted.source += 1;
         else if (blob.pathname.includes("/result/")) deleted.result += 1;
+        else if (isReadmapArtifact(blob.pathname)) deleted.readmap += 1;
         else deleted.status += 1;
       }
 
@@ -79,7 +86,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         await del(expired);
       }
 
-      const total = deleted.source + deleted.result + deleted.status;
+      const total =
+        deleted.source + deleted.result + deleted.status + deleted.readmap;
       if (total >= MAX_DELETIONS_PER_RUN) {
         // Leave the rest for the next hourly run rather than risk a timeout.
         truncated = true;

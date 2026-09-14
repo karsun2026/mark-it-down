@@ -273,6 +273,16 @@ verified to exist during the Phase 0 audit on 2026-09-13.
   suite repository. A separate Gemini key for READMAP is recommended over
   reusing the suite's key, so either can be rotated independently.
 
+- **Update (2026-09-13, increment 5 build):** The artifact layer is wired.
+  Artifacts live under the conversion job's own prefix
+  (`jobs/<date>/<job-id>/readmap/*.v1.json`) so `pathBelongsToJob` scoping
+  applies unchanged; `tiers.v1.json` was added to the plan's artifact list so
+  the depth slider never needs a model call or a network call. Status reads
+  bypass the CDN cache (D-005). READMAP artifacts carry their own retention
+  (`READMAP_RETENTION_DAYS`, default 7 days) swept by the existing hourly
+  cleanup route, which was extended to recognise `/readmap/` paths — the
+  converter's retention and everything else about it are unchanged.
+
 ## ADR-007 — Placement: build READMAP in this repository
 
 - **Status:** **Approved** (2026-09-13, repository owner): READMAP is built in
