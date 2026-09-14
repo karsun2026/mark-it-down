@@ -25,7 +25,7 @@ import {
   putReadmapArtifact,
   readmapArtifactPath,
 } from "@/lib/readmap/artifacts";
-import { verifyReadmapAccess } from "@/lib/readmap/route-access";
+import { verifyReadmapAccess, modelConfigured } from "@/lib/readmap/route-access";
 import { getClientForTask } from "@/lib/readmap/models/model-router";
 import { segmentDocument } from "@/lib/readmap/ingestion/segment";
 import {
@@ -78,6 +78,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   const verified = await verifyReadmapAccess(body);
   if ("error" in verified) return verified.error;
   const { jobId, resultPathname } = verified.access;
+
+  // Rule 15 / plan check 9: refuse BEFORE any work or token spend when the
+  // model configuration cannot run. Outside development the dev adapter is
+  // fail-closed, and without a provider key the pipeline would die mid-way.
+  if (!modelConfigured()) {
+    return errorResponse(
+      "SERVICE_UNAVAILABLE",
+      "No model provider is configured for READMAP. Set GEMINI_API_KEY, or use READMAP_MODEL_PROVIDER=dev in development only.",
+    );
+  }
 
   const originalFilename =
     typeof body.originalFilename === "string" && body.originalFilename.length > 0

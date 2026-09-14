@@ -15,10 +15,35 @@ import { errorResponse } from "@/lib/api-errors";
 import { pathBelongsToJob } from "@/lib/filename";
 import { verifyJobToken } from "@/lib/job-token";
 import type { NextResponse } from "next/server";
+import { ModelCallError } from "@/lib/readmap/models/client";
+import { getClientForTask } from "@/lib/readmap/models/model-router";
 
 export interface ReadmapAccess {
   jobId: string;
   resultPathname: string;
+}
+
+/**
+ * Pre-flight for the model configuration (rule 15; plan check 9).
+ *
+ * Returns true only when the configured provider can actually be constructed.
+ * In production with no key, or with an unsupported provider, this is false
+ * and the start route refuses with SERVICE_UNAVAILABLE — never a mock result,
+ * never a half-run pipeline that burns tokens and dies at the first call.
+ *
+ * Constructing a client performs no network I/O, so this is cheap and safe
+ * before the analysis begins.
+ */
+export function modelConfigured(): boolean {
+  try {
+    // Any task exercises the same provider/key selection path.
+    getClientForTask("mapper");
+    return true;
+  } catch (error) {
+    if (error instanceof ModelCallError) return false;
+    // A non-config failure is a code fault — let it surface.
+    throw error;
+  }
 }
 
 export async function verifyReadmapAccess(

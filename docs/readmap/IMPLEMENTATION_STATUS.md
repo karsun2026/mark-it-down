@@ -146,6 +146,25 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | New artifact-layer tests | 5/5 pass (paths, job scoping, retention, sweep detection) | 2026-09-13 | `frontend/lib/readmap/artifacts.test.ts` |
 | Frontend suite re-run | 167/167 pass — no regressions | 2026-09-13 | `npm run test` |
 | Production build | Pass — /readmap + 4 READMAP routes compile | 2026-09-13 | `npm run build` |
+
+## Phase 1 acceptance run (plan §9, 2026-09-13)
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Python converter suite | **336/336 pass** — converter untouched and green | `pytest ../tests/converter -q` (51s) |
+| 2. Frontend typecheck | Pass (clean) | `npm run typecheck` |
+| 3. Frontend Vitest suite | **179/179 pass** (167 + 12 acceptance-run tests) | `npm run test` |
+| 4. Production build | Pass | `npm run build` |
+| 5. Segmentation units | Pinned since increment 1 (13 tests, real grammar) | `segment.test.ts` |
+| 6. Grounding-gate unit tests | §11 items 1–3, 5–10 enforced; §11.4 deferred and reported, cannot silently pass | `grounding-gate.test.ts` |
+| 7. Tier nesting | `ONE_THING ⊆ … ⊆ DEEP_DIVE` enforced in agent + gate + scorer tests | `contract.test.ts`, `grounding-gate.test.ts`, `evals.test.ts` |
+| 8. Citation resolution | 100% of output-claim citations resolve (scorer gate `minimumCitationValidity: 1`); pipeline gate UNKNOWN_* checks | `evals.test.ts`, `citation-validator.ts` |
+| 9. Fail-closed without a key | `modelConfigured()` pre-flight refuses `/api/readmap/start` with SERVICE_UNAVAILABLE before any token spend, in every unconfigured configuration (6 tests) | `route-access.test.ts` |
+| 10. Injection fixtures | Harness scorer ported to `lib/readmap/evals/`; honest outputs pass all critical checks; outputs obeying embedded instructions are flagged in every trap and fail the release gate | `evals/evals.test.ts` |
+| 11. E2E | **Not run this session** — needs a live server with a real Gemini key (or the labelled dev adapter) and a browser. Remaining item for the Phase 1 exit. | — |
+| 12. Scanned-document honesty | A scanned-like fixture (page 2 yields no blocks + the converter's REAL §36 warning, pinned verbatim) yields PARTIAL_READY with the limitation surfaced, ratio < 1 — never a confident summary | `pipeline.test.ts` (check-12 block) |
+
+Remaining before Phase 1 closure: the E2E check (11) with credentials, then the independent review (`prompts/02_REVIEW_PHASE_1.md`).
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |

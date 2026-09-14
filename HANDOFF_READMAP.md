@@ -75,6 +75,16 @@ continues the build.
    production build passes.** The converter path remains untouched; the
    hourly cleanup now also sweeps READMAP artifacts under
    `READMAP_RETENTION_DAYS`.
+9. **Phase 1 acceptance run (offline portion) complete**: 336 Python tests
+   green; 179/179 frontend tests; build green. Eval harness ported to
+   `lib/readmap/evals/` (scorer + gates + synthetic traps verbatim, one
+   type-level adaptation documented in place): honest outputs pass, outputs
+   obeying embedded instructions are flagged and fail the release gate.
+   Fail-closed pre-flight (`modelConfigured()`) now guards `/api/readmap/start`
+   — SERVICE_UNAVAILABLE before any token spend without a key. Scanned-
+   document honesty pinned against the converter's REAL §36 warning text.
+   **Checks 1–10 and 12 pass; check 11 (E2E with credentials) remains**, then
+   the independent review.
 
 ## API keys (the question everyone asks next)
 
@@ -155,5 +165,6 @@ rustup/EDR incident in `HANDOFF.md` for why this is non-negotiable).
 | 2026-09-13 | Phase 1 increment 2: model client layer — spec §5 contract, Gemini fetch adapter, fail-closed dev adapter, per-role router + 29 tests (118/118 green, typecheck clean) | 08447dd |
 | 2026-09-13 | Phase 1 increment 3: agent skeletons — signal schema, versioned prompts, 4 agents with deterministic contract checks + 32 tests (150/150 green, typecheck clean) | cd285a9 |
 | 2026-09-13 | Phase 1 increment 4: orchestration pipeline + grounding gate — ReadMap/status schemas, evidence-first persistence, idempotency keys, gate with numeric deferral + 12 tests (162/162 green, typecheck clean) | 07b38ec |
-| 2026-09-13 | Phase 1 increment 5: Blob artifacts + 4 routes + /readmap UI — retention sweep extended, token-verified access, slider without model calls + 5 tests (167/167 green, build green) | (this commit) |
+| 2026-09-13 | Phase 1 increment 5: Blob artifacts + 4 routes + /readmap UI — retention sweep extended, token-verified access, slider without model calls + 5 tests (167/167 green, build green) | 4a5a49e |
+| 2026-09-13 | Phase 1 acceptance run (offline): eval-harness port + injection traps, fail-closed pre-flight, scanned-honesty pin; 336 Python green, 179/179 frontend, build green. E2E (check 11) remains | (this commit) |
 | 2026-09-13 | Session handoff document; branch pushed; PR opened | (earlier commit) |

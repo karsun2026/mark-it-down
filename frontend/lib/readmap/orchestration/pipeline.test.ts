@@ -261,3 +261,61 @@ describe("chunkBlocks", () => {
     expect(chunks.map((c) => c.map((b) => b.id))).toEqual([["b0001", "b0002"], ["b0003"]]);
   });
 });
+
+describe("scanned-document honesty (plan check 12)", () => {
+  // The exact warning the converter emits (converter/app/converters/pdf.py,
+  // §36 scan heuristic), verbatim — this test fails loudly if the wording
+  // drifts and READMAP stops surfacing it.
+  const SCAN_WARNING =
+    "Page 2 may be scanned or image-based. Text extraction may be incomplete.";
+
+  it("surfaces the converter's scanned-page warning instead of a confident summary", async () => {
+    const document = ConvertedDocumentV1Schema.parse({
+      schemaVersion: "1.0",
+      document: { filename: "scanned-like.pdf", sourceType: "pdf", pagesOrSlides: 2, wordCount: 25 },
+      // The scanned page (page 2) produced NO blocks — only page 1 is here.
+      blocks: DOCUMENT.blocks.filter((block) => block.pageNumber === 1),
+      warnings: [SCAN_WARNING],
+    });
+    // Fixtures consistent with a page-1-only document: the mapper can only
+    // know the Findings section, and only one signal exists.
+    const queues = {
+      mapper: [
+        {
+          documentType: "Quarterly business report",
+          mainThesisCandidates: ["2025 revenue grew 12% year over year"],
+          sections: [
+            { sectionPath: ["Findings"], purpose: "reports growth", signalDensity: "HIGH", value: "HIGH_VALUE" },
+          ],
+          warnings: [],
+        },
+      ],
+      "signal-extraction": [{ signals: [GROWTH] }],
+      skeptic: [SUPPORTED],
+      compression: [
+        {
+          tiers: {
+            ONE_THING: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+            BRUTAL: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+            QUICK_SCAN: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+            BRIEF: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+            READMAP: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+            DEEP_DIVE: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
+          },
+        },
+      ],
+    };
+    const { client } = routedClient(queues);
+    const result = await runReadmapPipeline({
+      jobId: "job1",
+      checksumSha256: CHECKSUM,
+      document,
+      getClient: () => client,
+    });
+
+    expect(result.status).toBe("PARTIAL_READY");
+    expect(result.readmap?.coverage.limitations).toContain(SCAN_WARNING);
+    // The result must never claim full coverage when a page was unreadable.
+    expect(result.readmap?.coverage.ratio).toBeLessThan(1);
+  });
+});
