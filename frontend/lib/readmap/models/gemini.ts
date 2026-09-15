@@ -56,6 +56,11 @@ function defaultModelForTask(): string {
  * rather than sent, because unsupported keywords risk a whole-request
  * rejection, and the Zod schema re-validates the response anyway.
  */
+// `additionalProperties` and `prefixItems` are intentionally absent: the live
+// Gemini structured-output endpoint rejects both with HTTP 400 ("Unknown name
+// ... Cannot find field"), and Zod v4 emits `additionalProperties: false` on
+// every object, so keeping it would 400 every request (verified 2026-09-15).
+// `title` IS accepted by Gemini and is kept.
 const GEMINI_SCHEMA_KEYS = [
   "type",
   "format",
@@ -63,14 +68,12 @@ const GEMINI_SCHEMA_KEYS = [
   "title",
   "enum",
   "items",
-  "prefixItems",
   "minItems",
   "maxItems",
   "minimum",
   "maximum",
   "properties",
   "required",
-  "additionalProperties",
 ] as const;
 
 function pruneForGemini(node: unknown): unknown {
@@ -105,7 +108,7 @@ function pruneForGemini(node: unknown): unknown {
     pruned.enum = [source["const"]];
   }
   // Fill the structural types Gemini expects.
-  if (("properties" in pruned || "additionalProperties" in pruned) && !("type" in pruned)) {
+  if ("properties" in pruned && !("type" in pruned)) {
     pruned.type = "object";
   }
   if ("items" in pruned && !("type" in pruned)) {
@@ -285,7 +288,29 @@ export function createGeminiClient(
         },
       };
 
-      const first = await callOnce(model, baseRequest);
+      // A built-but-unsupported responseSchema is rejected by Gemini with an
+      // HTTP 400 (e.g. a JSON-Schema keyword outside Gemini's subset). Rather
+      // than fail the unit, retry once in mime-type-only mode; the Zod schema
+      // still validates the output and the one repair attempt still applies.
+      let first: { text: string; usage: ModelUsage };
+      try {
+        first = await callOnce(model, baseRequest);
+      } catch (error) {
+        if (
+          error instanceof ModelCallError &&
+          error.status === 400 &&
+          baseRequest.generationConfig?.responseSchema
+        ) {
+          const { responseSchema: _dropped, ...configWithoutSchema } =
+            baseRequest.generationConfig;
+          first = await callOnce(model, {
+            ...baseRequest,
+            generationConfig: configWithoutSchema,
+          });
+        } else {
+          throw error;
+        }
+      }
       const firstJson = tryParseJson(first.text);
       let attempt = firstJson.ok
         ? input.schema.safeParse(firstJson.value)

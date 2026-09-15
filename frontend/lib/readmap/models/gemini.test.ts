@@ -219,6 +219,32 @@ describe("createGeminiClient — provider failures", () => {
   });
 });
 
+describe("createGeminiClient — responseSchema 400 fallback", () => {
+  it("retries once without responseSchema when the built schema is rejected (HTTP 400)", async () => {
+    // Verified 2026-09-15: the live endpoint 400s on some JSON-Schema keywords.
+    // The adapter must recover by dropping the schema, not fail the whole unit.
+    const { fetchImpl, calls } = stubFetch([
+      new Response(JSON.stringify({ error: { status: "INVALID_ARGUMENT" } }), {
+        status: 400,
+      }),
+      geminiOk('{"label":"growth","score":5}'),
+    ]);
+    const client = createGeminiClient({ apiKey: "k", fetchImpl });
+
+    const result = await client.generate(INPUT);
+
+    expect(result.value).toEqual({ label: "growth", score: 5 });
+    expect(result.repairAttempts).toBe(0);
+    expect(calls).toHaveLength(2);
+    // First attempt carries a responseSchema; the retry drops it but keeps JSON mode.
+    const firstBody = JSON.parse(String(calls[0]?.init.body));
+    const retryBody = JSON.parse(String(calls[1]?.init.body));
+    expect(firstBody.generationConfig.responseSchema).toBeTruthy();
+    expect(retryBody.generationConfig.responseSchema).toBeUndefined();
+    expect(retryBody.generationConfig.responseMimeType).toBe("application/json");
+  });
+});
+
 describe("toGeminiResponseSchema — Gemini-subset conversion", () => {
   it("maps literal consts onto supported enums and drops unsupported keywords", () => {
     const schema = z.object({
@@ -234,6 +260,21 @@ describe("toGeminiResponseSchema — Gemini-subset conversion", () => {
     expect(JSON.stringify(converted)).not.toContain("pattern");
     expect(converted?.properties).toHaveProperty("kind.enum", ["PDF", "DOCX"]);
     expect(converted?.required).toEqual(["version", "hash", "kind"]);
+  });
+
+  it("prunes keys the live Gemini API rejects, and keeps title", () => {
+    // Zod v4 emits `additionalProperties: false` on every object and
+    // `prefixItems` for tuples; the live endpoint 400s on both (verified
+    // 2026-09-15). `title` is accepted (HTTP 200) and must survive.
+    const schema = z
+      .object({ name: z.string(), pair: z.tuple([z.string(), z.number()]) })
+      .meta({ title: "Person" });
+    const converted = toGeminiResponseSchema(schema);
+    expect(converted).not.toBeNull();
+    const json = JSON.stringify(converted);
+    expect(json).not.toContain("additionalProperties");
+    expect(json).not.toContain("prefixItems");
+    expect(converted?.title).toBe("Person");
   });
 
   it("inlines reused object schemas instead of emitting $defs/$ref", () => {
