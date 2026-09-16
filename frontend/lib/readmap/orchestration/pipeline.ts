@@ -686,7 +686,7 @@ export async function runReadmapPipeline(
       usage,
       warnings: finalReadmap.coverage.limitations,
     };
-  } catch (error) {
+  } catch {
     // Any agent/persistence failure ends the job honestly at the stage it
     // reached; the message is shape-only (rule 16) and is never logged here —
     // the route layer owns logging and carries ids/counters only.

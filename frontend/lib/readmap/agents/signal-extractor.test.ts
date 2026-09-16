@@ -13,7 +13,6 @@ import { describe, expect, it } from "vitest";
 
 import type { EvidenceBlockInput } from "../schemas/evidence";
 import { SIGNAL_EXTRACTOR_PROMPT_VERSION } from "../prompts/signal-extractor";
-import { AgentContractError } from "./contract";
 import { runSignalExtractor } from "./signal-extractor";
 import { scriptedClient } from "./agent-test-support";
 

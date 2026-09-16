@@ -14,7 +14,6 @@ import { ConvertedDocumentV1Schema, type EvidenceBlockInput } from "../schemas/e
 import type { CandidateSignalOutput, DocumentMapV1, VerifiedSignalV1 } from "../schemas/signal";
 import {
   ModelCallError,
-  type AgentTask,
   type ModelGenerateInput,
   type ModelResult,
   type StructuredModelClient,

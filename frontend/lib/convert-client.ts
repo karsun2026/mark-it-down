@@ -322,8 +322,6 @@ async function requestDownloadUrl(
   job: PrepareJobResponse,
   signal: AbortSignal,
 ): Promise<{ downloadUrl: string; sizeBytes: number }> {
-  let lastError: unknown = null;
-
   for (let attempt = 1; attempt <= DOWNLOAD_URL_ATTEMPTS; attempt += 1) {
     try {
       return await requestDownloadUrlOnce(job, signal);
@@ -331,7 +329,6 @@ async function requestDownloadUrl(
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       // A refusal is final; retrying it just delays the error the user needs.
       if (error instanceof ConversionError) throw error;
-      lastError = error;
       if (attempt < DOWNLOAD_URL_ATTEMPTS) await sleep(1000 * attempt, signal);
     }
   }

@@ -42,7 +42,6 @@ function block(
 const FINDINGS1 = block("b0001", "Revenue grew 12% year over year.", ["Findings"], 1);
 const FINDINGS2 = block("b0002", "Management expects moderate growth.", ["Findings"], 1);
 const RISKS = block("b0003", "Supply concentration is a key risk.", ["Risks"], 2);
-const BLOCKS = [FINDINGS1, FINDINGS2, RISKS];
 
 const SIGNAL: CandidateSignalV1 = {
   id: "s0001",

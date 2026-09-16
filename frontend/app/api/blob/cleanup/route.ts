@@ -21,9 +21,6 @@ const MINUTE_MS = 60 * 1000;
 const SOURCE_MAX_AGE_MINUTES = envMinutes("SOURCE_BLOB_MAX_AGE_MINUTES", 60);
 const RESULT_MAX_AGE_MINUTES = envMinutes("RESULT_BLOB_MAX_AGE_MINUTES", 120);
 const STATUS_MAX_AGE_MINUTES = RESULT_MAX_AGE_MINUTES;
-// READMAP artifacts keep their own, longer retention (ADR-004; §23) so the
-// evidence behind a displayed result outlives the conversion result.
-const READMAP_MAX_AGE_MINUTES = readmapRetentionMinutes();
 
 /** §41 - bound the work per invocation so a backlog cannot run past maxDuration. */
 const MAX_DELETIONS_PER_RUN = 500;

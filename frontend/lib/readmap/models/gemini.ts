@@ -323,8 +323,8 @@ export function createGeminiClient(
           error.status === 400 &&
           baseRequest.generationConfig?.responseSchema
         ) {
-          const { responseSchema: _dropped, ...configWithoutSchema } =
-            baseRequest.generationConfig;
+          const configWithoutSchema = { ...baseRequest.generationConfig };
+          delete configWithoutSchema.responseSchema;
           first = await callOnce(model, {
             ...baseRequest,
             generationConfig: configWithoutSchema,

@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { clearDevResponses, createDevClient, registerDevResponse } from "./dev-adapter";
+import { clearDevResponses, registerDevResponse } from "./dev-adapter";
 import { DEFAULT_MODEL, getClientForTask, resolveModelForTask } from "./model-router";
 
 afterEach(() => {
