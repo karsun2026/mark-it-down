@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { ConvertedDocumentV1Schema, type EvidenceBlockInput } from "../schemas/evidence";
+import type { CandidateSignalOutput, DocumentMapV1, VerifiedSignalV1 } from "../schemas/signal";
 import {
   ModelCallError,
   type AgentTask,
@@ -18,7 +19,7 @@ import {
   type ModelResult,
   type StructuredModelClient,
 } from "../models/client";
-import { runReadmapPipeline, chunkBlocks } from "./pipeline";
+import { runReadmapPipeline, chunkBlocks, mapWithConcurrency, assembleReadmap } from "./pipeline";
 
 function block(id: string, body: string, sectionPath: string[], page: number): EvidenceBlockInput {
   return {
@@ -44,7 +45,7 @@ const DOCUMENT = ConvertedDocumentV1Schema.parse({
   warnings: [],
 });
 
-const MAP = {
+const MAP: DocumentMapV1 = {
   documentType: "Quarterly business report",
   mainThesisCandidates: ["2025 revenue grew 12% year over year"],
   sections: [
@@ -54,7 +55,7 @@ const MAP = {
   warnings: [],
 };
 
-const GROWTH = {
+const GROWTH: CandidateSignalOutput = {
   claim: "Revenue grew 12% year over year.",
   type: "QUANTITATIVE",
   evidenceBlockIds: ["b0001"],
@@ -63,7 +64,7 @@ const GROWTH = {
   warnings: [],
 };
 
-const RISK = {
+const RISK: CandidateSignalOutput = {
   claim: "Supply concentration is a key risk.",
   type: "RISK",
   evidenceBlockIds: ["b0003"],
@@ -259,6 +260,134 @@ describe("chunkBlocks", () => {
   it("splits on section change and size ceiling", () => {
     const chunks = chunkBlocks(DOCUMENT.blocks, 2);
     expect(chunks.map((c) => c.map((b) => b.id))).toEqual([["b0001", "b0002"], ["b0003"]]);
+  });
+});
+
+describe("mapWithConcurrency (§6-C3)", () => {
+  it("preserves order regardless of completion order", async () => {
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    const result = await mapWithConcurrency(items, 6, async (item) => {
+      // Later items resolve first — order must still be input order.
+      await new Promise((resolve) => setTimeout(resolve, (20 - item) * 5));
+      return item * 2;
+    });
+    expect(result).toEqual(items.map((i) => i * 2));
+  });
+
+  it("never exceeds the concurrency limit", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    await mapWithConcurrency(items, 4, async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("per-unit checkpoints (§6-C2: a retry never re-bills)", () => {
+  it("makes zero model calls on a fully checkpointed re-run", async () => {
+    const store = new Map<string, unknown>();
+    const checkpoint = {
+      get: async <T,>(key: string): Promise<T | null> =>
+        (store.get(key) as T | undefined) ?? null,
+      put: async (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    };
+
+    const first = routedClient(QUEUES);
+    const firstResult = await runReadmapPipeline({
+      jobId: "job1",
+      checksumSha256: CHECKSUM,
+      document: DOCUMENT,
+      getClient: () => first.client,
+      checkpoint,
+    });
+    expect(firstResult.status).toBe("READY");
+    expect(first.calls.length).toBeGreaterThan(0);
+
+    // Second run: every unit is a checkpoint hit, so no model call may happen.
+    const second = routedClient(QUEUES);
+    const secondResult = await runReadmapPipeline({
+      jobId: "job1",
+      checksumSha256: CHECKSUM,
+      document: DOCUMENT,
+      getClient: () => second.client,
+      checkpoint,
+    });
+    expect(second.calls).toHaveLength(0);
+    expect(secondResult.status).toBe("READY");
+    expect(secondResult.readmap?.thePoint.signalIds).toEqual(["s0001"]);
+    // No tokens were spent by the retry — the checkpointed units are reused.
+    expect(secondResult.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  it("falls back to a billed call when the checkpoint store is empty", async () => {
+    const { client, calls } = routedClient(QUEUES);
+    const result = await runReadmapPipeline({
+      jobId: "job1",
+      checksumSha256: CHECKSUM,
+      document: DOCUMENT,
+      getClient: () => client,
+      checkpoint: {
+        get: async () => null,
+        put: async () => {},
+      },
+    });
+    expect(result.status).toBe("READY");
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("thePoint usability (§6-M3)", () => {
+  it("falls back to a usable signal when the READMAP tier cites a non-usable one", () => {
+    // §6-M3 defence-in-depth, tested at the assembly boundary: thePoint must
+    // resolve to a USABLE signal (SIGNAL_NOT_USABLE at thePoint is
+    // unrepairable and would fail the whole job). The compressor's own
+    // post-checks already reject most such outputs (§3-M2), so this guards
+    // the assembly path directly.
+    const signals: VerifiedSignalV1[] = [
+      {
+        ...GROWTH,
+        id: "s0001",
+        skepticVerdict: "UNSUPPORTED",
+        explanationCode: "NOT_IN_DOCUMENT",
+        explanation: "no cited span states this",
+      },
+      {
+        ...RISK,
+        id: "s0002",
+        skepticVerdict: "SUPPORTED",
+        explanationCode: "OK",
+        explanation: "stated directly in the cited span",
+      },
+    ];
+    const readmap = assembleReadmap({
+      jobId: "job1",
+      document: DOCUMENT,
+      map: MAP,
+      signals,
+      // READMAP[0] wrongly cites the UNSUPPORTED signal.
+      tiers: {
+        ...TIERS,
+        tiers: {
+          ...TIERS.tiers,
+          READMAP: [
+            { signalId: "s0001", text: "Revenue grew 12% year over year." },
+            { signalId: "s0002", text: "Supply concentration is a key risk." },
+          ],
+        },
+      },
+      extraWarnings: [],
+    });
+    // thePoint falls through to the first USABLE tier entry (s0002), or to
+    // the honest fallback — never to the non-usable s0001.
+    expect(readmap.thePoint.signalIds).not.toContain("s0001");
+    expect(readmap.thePoint.signalIds).toEqual(["s0002"]);
   });
 });
 

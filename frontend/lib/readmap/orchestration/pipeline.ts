@@ -47,10 +47,53 @@ import { deriveStageKey } from "./stages";
 
 /** Max evidence blocks per extraction unit (bounded cost per call). */
 export const MAX_BLOCKS_PER_CHUNK = 12;
-/** Hard cap on candidate signals per job, with a visible warning when hit. */
-export const MAX_CANDIDATE_SIGNALS = 100;
+/**
+ * Hard cap on candidate signals per job, with a visible warning when hit.
+ * Lowered from 100 to 40 for the Phase-1 vertical slice (review §6-C3): the
+ * durable fix is the resumable-stage split of ADR-005, which needs the
+ * per-unit checkpoints (§6-C2, now wired).
+ */
+export const MAX_CANDIDATE_SIGNALS = 40;
 /** Default depth tier the result renders first (slider never calls a model). */
 export const DEFAULT_PRESET = "READMAP" as const;
+/**
+ * Concurrent skeptic calls during VERIFYING (review §6-C3). Kept small to
+ * respect provider rate limits; order is preserved by `mapWithConcurrency`.
+ */
+export const VERIFY_CONCURRENCY = 6;
+
+/**
+ * Per-unit checkpoint store (review §6-C2): keyed by the exact
+ * `deriveStageKey` idempotency key, so a retried or resumed run reuses
+ * previous unit results instead of re-billing them.
+ */
+export interface UnitCheckpoint {
+  get<T>(key: string): Promise<T | null>;
+  put(key: string, value: unknown): Promise<void>;
+}
+
+/**
+ * Rough per-token cost estimate in USD used ONLY for the
+ * READMAP_MAX_JOB_COST_USD budget guard (review §6-L2). Conservative upper
+ * bound for the gemini-2.5-flash family; never displayed as a fact — only
+ * the "budget reached" limitation is user-visible.
+ */
+const ESTIMATED_INPUT_COST_PER_TOKEN_USD = 0.3e-6;
+const ESTIMATED_OUTPUT_COST_PER_TOKEN_USD = 2.5e-6;
+
+function estimateUsageCostUsd(usage: ModelUsage): number {
+  return (
+    usage.inputTokens * ESTIMATED_INPUT_COST_PER_TOKEN_USD +
+    usage.outputTokens * ESTIMATED_OUTPUT_COST_PER_TOKEN_USD
+  );
+}
+
+function maxJobCostUsd(): number | null {
+  const raw = process.env.READMAP_MAX_JOB_COST_USD;
+  if (!raw) return null;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 export interface ReadmapPipelineInput {
   jobId: string;
@@ -60,6 +103,12 @@ export interface ReadmapPipelineInput {
   onStage?: (status: ReadMapStatusV1) => void;
   /** ADR-004 artifact writer (Blob in production; injectable for tests). */
   persistArtifact?: (name: string, value: unknown) => Promise<void>;
+  /**
+   * Per-unit checkpoint store (§6-C2). Before each model unit the pipeline
+   * consults it under the unit's idempotency key; a hit skips the model call
+   * entirely, so a retry never re-bills a unit that already completed.
+   */
+  checkpoint?: UnitCheckpoint;
 }
 
 export interface ReadmapPipelineResult {
@@ -135,6 +184,26 @@ export function chunkBlocks(
   return chunks;
 }
 
+/** Run `fn` over items with a bounded number of in-flight calls, preserving order. */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index] as T, index);
+    }
+  }
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Result assembly (deterministic — no model calls)
 // ---------------------------------------------------------------------------
@@ -154,7 +223,10 @@ export function assembleReadmap(input: {
 
   const readTier = tiers.tiers[DEFAULT_PRESET];
 
-  const oneThing = readTier[0];
+  // thePoint must resolve to a USABLE signal, or the gate hard-fails the job
+  // (SIGNAL_NOT_USABLE at thePoint is unrepairable, review §6-M3). Fall
+  // through to the honest fallback when no tier entry cites a usable signal.
+  const oneThing = readTier.find((entry) => usableById.has(entry.signalId));
   const rememberThese = readTier
     .slice(1)
     .filter((entry) => usableById.has(entry.signalId))
@@ -330,6 +402,55 @@ function addUsage(total: ModelUsage, addition: ModelUsage): void {
   total.outputTokens += addition.outputTokens;
 }
 
+/**
+ * Run one model unit under its checkpoint key (§6-C2): a checkpoint hit
+ * reuses the stored value and reports ZERO usage — the tokens were already
+ * spent and billed on the run that produced the checkpoint, so a retry does
+ * not re-bill. Checkpoint store faults are swallowed: checkpointing is an
+ * optimization and must never fail the job.
+ */
+async function cachedUnit<V>(
+  checkpoint: UnitCheckpoint | undefined,
+  key: string,
+  call: () => Promise<{ value: V; usage: ModelUsage }>,
+): Promise<{ value: V; usage: ModelUsage }> {
+  if (checkpoint) {
+    try {
+      const hit = await checkpoint.get<{ value: V }>(key);
+      if (hit && typeof hit === "object" && "value" in hit) {
+        return { value: hit.value, usage: { inputTokens: 0, outputTokens: 0 } };
+      }
+    } catch {
+      // A unreadable checkpoint degrades to a fresh (billed) call.
+    }
+  }
+  const fresh = await call();
+  if (checkpoint) {
+    try {
+      await checkpoint.put(key, { value: fresh.value });
+    } catch {
+      // An unstorable checkpoint only costs the next retry, not this job.
+    }
+  }
+  return fresh;
+}
+
+/**
+ * READMAP_MAX_JOB_COST_USD guard (review §6-L2): when the estimated spend of
+ * this run reaches the configured cap, later model units are skipped and a
+ * disclosed limitation is added — the job ends PARTIAL_READY, never silently
+ * over budget. Absent/invalid configuration disables the guard.
+ */
+function budgetReached(usage: ModelUsage, warnings: string[]): boolean {
+  const cap = maxJobCostUsd();
+  if (cap === null) return false;
+  if (estimateUsageCostUsd(usage) < cap) return false;
+  const notice =
+    "READMAP_MAX_JOB_COST_USD budget reached; analysis stopped early and this result is partial.";
+  if (!warnings.includes(notice)) warnings.push(notice);
+  return true;
+}
+
 async function persist(
   persistArtifact: ReadmapPipelineInput["persistArtifact"] | undefined,
   name: string,
@@ -357,31 +478,51 @@ export async function runReadmapPipeline(
 
     // MAPPING
     currentStage = "MAPPING"; publish("MAPPING");
-    const mapperRun = await runMapper(input.getClient("mapper"), {
-      document: input.document,
-      idempotencyKey: deriveStageKey({
+    const mapper = await cachedUnit(
+      input.checkpoint,
+      deriveStageKey({
         checksumSha256: input.checksumSha256,
         stage: "MAPPING",
         unitId: "whole",
       }),
-    });
-    addUsage(usage, mapperRun.result.usage);
+      async () => {
+        const run = await runMapper(input.getClient("mapper"), {
+          document: input.document,
+          idempotencyKey: deriveStageKey({
+            checksumSha256: input.checksumSha256,
+            stage: "MAPPING",
+            unitId: "whole",
+          }),
+        });
+        return { value: run.result.value, usage: run.result.usage };
+      },
+    );
+    addUsage(usage, mapper.usage);
 
     // EXTRACTING — bounded chunks, sequential, honest unit progress.
     currentStage = "EXTRACTING"; publish("EXTRACTING");
     const chunks = chunkBlocks(input.document.blocks);
     const rawCandidates: CandidateSignalV1[] = [];
     for (const [index, chunk] of chunks.entries()) {
-      const run = await runSignalExtractor(input.getClient("signal-extraction"), {
-        blocks: chunk,
-        idempotencyKey: deriveStageKey({
-          checksumSha256: input.checksumSha256,
-          stage: "EXTRACTING",
-          unitId: `chunk${index + 1}`,
-        }),
+      if (budgetReached(usage, warnings)) break;
+      const chunkKey = deriveStageKey({
+        checksumSha256: input.checksumSha256,
+        stage: "EXTRACTING",
+        unitId: `chunk${index + 1}`,
       });
-      addUsage(usage, run.result.usage);
-      for (const signal of run.result.value.signals) {
+      const unit = await cachedUnit(
+        input.checkpoint,
+        chunkKey,
+        async () => {
+          const run = await runSignalExtractor(input.getClient("signal-extraction"), {
+            blocks: chunk,
+            idempotencyKey: chunkKey,
+          });
+          return { value: run.result.value, usage: run.result.usage };
+        },
+      );
+      addUsage(usage, unit.usage);
+      for (const signal of unit.value.signals) {
         if (rawCandidates.length >= MAX_CANDIDATE_SIGNALS) {
           if (rawCandidates.length === MAX_CANDIDATE_SIGNALS) {
             warnings.push(
@@ -398,49 +539,81 @@ export async function runReadmapPipeline(
     // unique across the document, not just within one chunk.
     const candidates = assignSignalIds(rawCandidates);
 
-    // VERIFYING — one bounded skeptic unit per candidate.
+    // VERIFYING — one bounded skeptic unit per candidate, run with a small
+    // concurrency limit (§6-C3) so a real document fits the function ceiling.
+    // Order is preserved by mapWithConcurrency; addUsage/verifiedCount
+    // mutations are safe (JS is single-threaded; each await resumes atomically).
     currentStage = "VERIFYING"; publish("VERIFYING", { unitsTotal: candidates.length });
-    const signals: VerifiedSignalV1[] = [];
-    for (const [index, candidate] of candidates.entries()) {
-      const run = await runSkeptic(input.getClient("skeptic"), {
-        signal: candidate,
-        blocks: input.document.blocks,
-        idempotencyKey: deriveStageKey({
+    let verifiedCount = 0;
+    const verifiedOrNull: (VerifiedSignalV1 | null)[] = await mapWithConcurrency(
+      candidates,
+      VERIFY_CONCURRENCY,
+      async (candidate): Promise<VerifiedSignalV1 | null> => {
+        const verifyKey = deriveStageKey({
           checksumSha256: input.checksumSha256,
           stage: "VERIFYING",
           unitId: candidate.id,
-        }),
-      });
-      addUsage(usage, run.result.usage);
-      signals.push({
-        ...candidate,
-        skepticVerdict: run.result.value.verdict,
-        explanationCode: run.result.value.explanationCode,
-        explanation: run.result.value.explanation,
-        repairedClaim: run.result.value.repairedClaim,
-      });
-      currentStage = "VERIFYING"; publish("VERIFYING", { unitsDone: index + 1, unitsTotal: candidates.length });
-    }
+        });
+        // Budget guard: a candidate past the cap is skipped (not verified)
+        // rather than silently over-spending; the limitation is disclosed.
+        if (budgetReached(usage, warnings)) {
+          return null;
+        }
+        const unit = await cachedUnit(
+          input.checkpoint,
+          verifyKey,
+          async () => {
+            const run = await runSkeptic(input.getClient("skeptic"), {
+              signal: candidate,
+              blocks: input.document.blocks,
+              idempotencyKey: verifyKey,
+            });
+            return { value: run.result.value, usage: run.result.usage };
+          },
+        );
+        addUsage(usage, unit.usage);
+        verifiedCount += 1;
+        publish("VERIFYING", { unitsDone: verifiedCount, unitsTotal: candidates.length });
+        return {
+          ...candidate,
+          skepticVerdict: unit.value.verdict,
+          explanationCode: unit.value.explanationCode,
+          explanation: unit.value.explanation,
+          repairedClaim: unit.value.repairedClaim,
+        };
+      },
+    );
+    const signals: VerifiedSignalV1[] = verifiedOrNull.filter(
+      (entry): entry is VerifiedSignalV1 => entry !== null,
+    );
     await persist(input.persistArtifact, "signals.v1.json", signals);
 
     // COMPRESSING — only verified signals, all tiers in one unit.
     currentStage = "COMPRESSING"; publish("COMPRESSING");
     const usable = signals.filter(isUsableSignal);
-    const compressorRun = await runCompressor(input.getClient("compression"), {
-      verified: usable.map((signal) => ({
-        id: signal.id,
-        claim: effectiveClaim(signal),
-        epistemicStatus: signal.epistemicStatus,
-      })),
-      documentMap: mapperRun.result.value,
-      idempotencyKey: deriveStageKey({
-        checksumSha256: input.checksumSha256,
-        stage: "COMPRESSING",
-        unitId: "whole",
-      }),
+    const compressorKey = deriveStageKey({
+      checksumSha256: input.checksumSha256,
+      stage: "COMPRESSING",
+      unitId: "whole",
     });
-    addUsage(usage, compressorRun.result.usage);
-    const tiers = compressorRun.result.value;
+    const compressorUnit = await cachedUnit(
+      input.checkpoint,
+      compressorKey,
+      async () => {
+        const run = await runCompressor(input.getClient("compression"), {
+          verified: usable.map((signal) => ({
+            id: signal.id,
+            claim: effectiveClaim(signal),
+            epistemicStatus: signal.epistemicStatus,
+          })),
+          documentMap: mapper.value,
+          idempotencyKey: compressorKey,
+        });
+        return { value: run.result.value, usage: run.result.usage };
+      },
+    );
+    addUsage(usage, compressorUnit.usage);
+    const tiers = compressorUnit.value;
     await persist(input.persistArtifact, "tiers.v1.json", tiers);
 
     // GROUNDING — assemble deterministically, gate, repair by omission once.
@@ -448,7 +621,7 @@ export async function runReadmapPipeline(
     const readmap = assembleReadmap({
       jobId: input.jobId,
       document: input.document,
-      map: mapperRun.result.value,
+      map: mapper.value,
       signals,
       tiers,
       extraWarnings: warnings,
@@ -488,16 +661,15 @@ export async function runReadmapPipeline(
         });
       }
       finalReadmap = repaired;
+      gate = recheck; // §6-L3: reuse the recheck — no third gate run.
       warnings.push("Some entries were omitted for failing grounding checks.");
     }
     await persist(input.persistArtifact, "readmap.v1.json", finalReadmap);
 
-    const gated = runGroundingGate({
-      readmap: finalReadmap,
-      signals,
-      evidence: input.document.blocks,
-      tiers,
-    });
+    // `gate` was computed on exactly `finalReadmap` (either the initial run or
+    // the post-repair recheck) — a third identical gate pass is redundant
+    // (review §6-L3).
+    const gated = gate;
     const status: ReadMapTerminalState =
       gated.passed &&
       finalReadmap.coverage.ratio >= 0.95 &&
