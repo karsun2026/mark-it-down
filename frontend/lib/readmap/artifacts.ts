@@ -19,6 +19,8 @@
  * cache (D-005: a stale stage makes a finished job look stuck).
  */
 
+import { createHash } from "node:crypto";
+
 import { issueSignedToken, presignUrl, put } from "@vercel/blob";
 
 const ACCESS = "private" as const;
@@ -68,20 +70,61 @@ export function readmapRetentionMinutes(): number {
   return days * 24 * 60;
 }
 
-/** Write one artifact as private JSON. Retries may overwrite (idempotent). */
+/**
+ * Write one artifact as private JSON.
+ *
+ * Immutable artifacts (`immutable: true`, ADR-004/spec §7) are written with
+ * `allowOverwrite: false` so a re-run can never silently replace the evidence
+ * behind a displayed result. The status object is the deliberate exception
+ * (D-002): it is overwritten on every publish.
+ */
 export async function putReadmapArtifact(
   pathname: string,
   value: unknown,
+  options: { immutable?: boolean } = {},
 ): Promise<void> {
   await put(pathname, JSON.stringify(value), {
     access: ACCESS,
     contentType: "application/json",
     addRandomSuffix: false,
-    allowOverwrite: true,
+    allowOverwrite: !options.immutable,
   });
 }
 
-/** Presigned GET for a READMAP artifact, CDN cache bypassed when `fresh`. */
+/**
+ * Checkpoint pathname for one pipeline unit (§6-C2). The stage key contains
+ * `:` and other path-unsafe characters, so it is hashed to a flat name — the
+ * checkpoint store is content-addressed by the exact key, never parsed.
+ */
+export function readmapUnitPath(resultPathname: string, key: string): string | null {
+  const base = readmapBaseFromResultPath(resultPathname);
+  if (!base) return null;
+  const safe = createHash("sha256").update(key).digest("hex").slice(0, 32);
+  return `${base}/readmap/units/${safe}.json`;
+}
+
+/**
+ * Read one unit checkpoint (null when absent), scoped like every other
+ * READMAP artifact read.
+ */
+export async function getReadmapUnit<T>(pathname: string): Promise<T | null> {
+  return getReadmapArtifact<T>(pathname, { fresh: false });
+}
+
+/** Persist one unit checkpoint (overwritten is fine — content is key-pinned). */
+export async function putReadmapUnit(
+  pathname: string,
+  value: unknown,
+): Promise<void> {
+  await putReadmapArtifact(pathname, value);
+}
+
+/**
+ * Presigned GET for a READMAP artifact. `fresh` means "bypass the CDN cache"
+ * (D-005): it maps to `useCache: false`, matching the converter's
+ * `signStatusGet` convention — a stale status read makes a finished job look
+ * stuck, so status reads must always bypass the edge cache.
+ */
 async function presignedGet(pathname: string, fresh: boolean): Promise<string> {
   const validUntil = Date.now() + 10 * 60 * 1000;
   const token = await issueSignedToken({
@@ -93,7 +136,7 @@ async function presignedGet(pathname: string, fresh: boolean): Promise<string> {
     operation: "get",
     pathname,
     access: ACCESS,
-    useCache: fresh,
+    useCache: !fresh,
     validUntil,
   });
   return presignedUrl;

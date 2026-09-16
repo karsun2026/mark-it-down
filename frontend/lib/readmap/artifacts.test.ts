@@ -9,6 +9,7 @@ import {
   readmapArtifactPath,
   readmapBaseFromResultPath,
   readmapRetentionMinutes,
+  readmapUnitPath,
 } from "./artifacts";
 
 const RESULT = "jobs/2026-09-13/job-uuid-1/result/report.md";
@@ -47,5 +48,19 @@ describe("retention", () => {
     expect(isReadmapArtifact("jobs/2026-09-13/j/readmap/status.v1.json")).toBe(true);
     expect(isReadmapArtifact("jobs/2026-09-13/j/result/report.md")).toBe(false);
     expect(isReadmapArtifact("jobs/2026-09-13/j/status.json")).toBe(false);
+  });
+});
+
+describe("unit checkpoints (§6-C2)", () => {
+  it("derives a flat, job-scoped, key-hashed checkpoint path", () => {
+    const path = readmapUnitPath(RESULT, "checksum:readmap-pipeline.v1:VERIFYING:s0001");
+    expect(path).toMatch(/^jobs\/2026-09-13\/job-uuid-1\/readmap\/units\/[0-9a-f]{32}\.json$/);
+    // Same key -> same path; different key -> different path.
+    expect(readmapUnitPath(RESULT, "checksum:readmap-pipeline.v1:VERIFYING:s0001")).toBe(path);
+    expect(readmapUnitPath(RESULT, "checksum:readmap-pipeline.v1:VERIFYING:s0002")).not.toBe(path);
+  });
+
+  it("returns null when the result path has no /result/ marker", () => {
+    expect(readmapUnitPath("no-marker", "key")).toBeNull();
   });
 });
