@@ -2,7 +2,7 @@
  * READMAP analysis status (D-002 pattern).
  *
  * Reads status.v1.json with the CDN cache bypassed (D-005: a stale stage
- * would make a finished analysis look stuck). Returns `stage: "UNKNOWN"`
+ * would make a finished analysis look stuck). Returns `stage: "STARTING"`
  * while nothing has been published yet — the honest answer, not a fake stage.
  */
 

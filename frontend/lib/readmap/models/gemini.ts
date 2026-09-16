@@ -29,6 +29,8 @@ import {
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_TIMEOUT_MS = 120_000;
+/** One bounded backoff before the single 429/503 retry (review §6-L1). */
+const TRANSIENT_RETRY_BACKOFF_MS = 2_000;
 
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
@@ -41,6 +43,8 @@ export interface GeminiClientOptions {
   fetchImpl?: typeof fetch;
   /** Per-role model id resolver (defaults to the extraction-model variable). */
   modelForTask?: (task: ModelGenerateInput<never>["task"]) => string;
+  /** Backoff before the single 429/503 retry; override only in tests. */
+  transientRetryBackoffMs?: number;
 }
 
 function defaultModelForTask(): string {
@@ -200,31 +204,49 @@ export function createGeminiClient(
   }
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retryBackoffMs = options.transientRetryBackoffMs ?? TRANSIENT_RETRY_BACKOFF_MS;
   const doFetch = options.fetchImpl ?? fetch.bind(globalThis);
   const modelForTask = options.modelForTask ?? defaultModelForTask;
+
+  function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
   async function callOnce(
     model: string,
     request: GeminiGenerateRequest,
   ): Promise<{ text: string; usage: ModelUsage }> {
     let response: Response;
-    try {
-      response = await doFetch(`${baseUrl}/models/${model}:generateContent`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          // Key goes in a header, never in the URL or a log line.
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(request),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch {
-      // Shape only: a timeout/abort or network fault, without the URL.
-      throw new ModelCallError(
-        "provider",
-        "gemini request failed before a response arrived",
-      );
+    // §6-L1: one bounded retry on transient provider throttling. With ~40+
+    // calls per job, a single 429/503 must not fail the whole job.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await doFetch(`${baseUrl}/models/${model}:generateContent`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            // Key goes in a header, never in the URL or a log line.
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify(request),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch {
+        // Shape only: a timeout/abort or network fault, without the URL.
+        throw new ModelCallError(
+          "provider",
+          "gemini request failed before a response arrived",
+        );
+      }
+      if (response.ok) break;
+      if (
+        (response.status === 429 || response.status === 503) &&
+        attempt === 0
+      ) {
+        await sleep(retryBackoffMs);
+        continue;
+      }
+      break;
     }
 
     if (!response.ok) {

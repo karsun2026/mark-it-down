@@ -163,12 +163,21 @@ describe("createGeminiClient — schema repair (spec §10)", () => {
 
 describe("createGeminiClient — provider failures", () => {
   it("maps HTTP provider errors to kind=provider with shape-only messages", async () => {
-    const { fetchImpl } = stubFetch([
+    // §6-L1: a 429 is retried once after a short backoff — so the failure must
+    // be scripted twice (retry, then the same 429) before the unit fails.
+    const { fetchImpl, calls } = stubFetch([
+      new Response(JSON.stringify({ error: { status: "RESOURCE_EXHAUSTED" } }), {
+        status: 429,
+      }),
       new Response(JSON.stringify({ error: { status: "RESOURCE_EXHAUSTED" } }), {
         status: 429,
       }),
     ]);
-    const client = createGeminiClient({ apiKey: "k", fetchImpl });
+    const client = createGeminiClient({
+      apiKey: "k",
+      fetchImpl,
+      transientRetryBackoffMs: 1,
+    });
 
     await expect(client.generate(INPUT)).rejects.toMatchObject({
       kind: "provider",
@@ -176,6 +185,25 @@ describe("createGeminiClient — provider failures", () => {
       // Shape only: no provider message body, no URL, no key in the message.
       message: "gemini request failed with HTTP 429 (RESOURCE_EXHAUSTED)",
     });
+    // Exactly one retry — never a hammering loop.
+    expect(calls).toHaveLength(2);
+  });
+
+  it("recovers when a single 429 is followed by a successful response (§6-L1)", async () => {
+    const { fetchImpl } = stubFetch([
+      new Response(JSON.stringify({ error: { status: "RESOURCE_EXHAUSTED" } }), {
+        status: 429,
+      }),
+      geminiOk('{"label":"growth","score":8}'),
+    ]);
+    const client = createGeminiClient({
+      apiKey: "k",
+      fetchImpl,
+      transientRetryBackoffMs: 1,
+    });
+
+    const result = await client.generate(INPUT);
+    expect(result.value).toEqual({ label: "growth", score: 8 });
   });
 
   it("rejects a truncated response even when the text would parse", async () => {

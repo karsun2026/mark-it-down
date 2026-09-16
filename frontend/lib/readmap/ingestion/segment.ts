@@ -65,6 +65,25 @@ function collapse(text: string): string {
   return text.split(/\s+/).filter(Boolean).join(" ");
 }
 
+/**
+ * Word count over prose content only (§6-L7): page/slide anchors and `---`
+ * separators are skipped entirely, and table pipes are treated as separators
+ * rather than words.
+ */
+function countProseWords(markdown: string): number {
+  let count = 0;
+  for (const raw of markdown.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || HR.test(line)) continue;
+    if (PAGE_ANCHOR.test(line) || SLIDE_ANCHOR.test(line)) continue;
+    count += line
+      .replace(/\|/g, " ")
+      .split(/\s+/)
+      .filter(Boolean).length;
+  }
+  return count;
+}
+
 export function segmentDocument(input: SegmentInput): ConvertedDocumentV1 {
   const warnings: string[] = [...(input.converterWarnings ?? [])];
   const blocks: EvidenceBlockInput[] = [];
@@ -214,7 +233,11 @@ export function segmentDocument(input: SegmentInput): ConvertedDocumentV1 {
       filename: input.filename,
       sourceType: input.sourceType,
       pagesOrSlides: input.pagesOrSlides,
-      wordCount: input.markdown.split(/\s+/).filter(Boolean).length,
+      // §6-L7: words are counted from prose only. Page/slide anchor lines and
+      // the `---` separators are converter scaffolding, and table pipes are
+      // formatting — counting either inflated reading-time and compression
+      // statistics.
+      wordCount: countProseWords(input.markdown),
     },
     blocks,
     warnings,
