@@ -202,6 +202,70 @@ Remaining before Phase 1 closure: the E2E check (11) with credentials, then the 
 | Push to `main` deploys production | Medium | Phase 1 work must happen on `feature/readmap-mvp` | Plan §1 |
 | New npm dependency (zod) needed for schema validation | Low | MIT license, widely used; recorded in ADR-006 | Approval at Phase 1 |
 
+## Phase 1 code-review remediation (2026-09-16)
+
+`docs/readmap/PHASE_1_CODE_REVIEW.md` (independent review, 2026-09-15) was
+implemented per its §6 fix pack, in its §5 order. All work on
+`feature/readmap-mvp`:
+
+- **H1** — `artifacts.ts` `presignedGet`: `useCache: !fresh` (status reads now
+  really bypass the CDN, matching D-005). Test added (`artifact-io.test.ts`).
+- **C1** — `start/route.ts` reuse branch now reads the persisted `ReadMapV1`
+  object itself (the old `existing?.readmap` check was dead code), returns
+  `PARTIAL_READY` when the stored status says so. Route-level test added
+  (`lib/readmap/start-route.test.ts`); asserts `reused: true` and that the
+  pipeline never runs.
+- **C2** — per-unit checkpoints wired: `readmapUnitPath` +
+  `get/putReadmapUnit` in `artifacts.ts`, a `checkpoint` hook in
+  `ReadmapPipelineInput`, `cachedUnit` in the pipeline, and the start route
+  backs it with `readmap/units/<key-hash>.json`. A checkpoint hit reports
+  ZERO usage — a retry does not re-bill. Test: a fully checkpointed re-run
+  makes zero model calls.
+- **C3** — VERIFYING parallelized with `mapWithConcurrency`
+  (`VERIFY_CONCURRENCY = 6`, order-preserving, unit-tested) and
+  `MAX_CANDIDATE_SIGNALS` lowered to 40 for the slice with the warning kept.
+- **M1** — numeric guard compares canonical VALUES (`$1.5bn` ≡ `1.5 billion`,
+  `12%` ≡ `12 percent`, `1,000` ≡ `1000`); no more false-positive
+  NUMBER_DROPPED on rewordings. Tests in `numeric-guard.test.ts`.
+- **M3** — `thePoint` only cites a USABLE signal (falls through otherwise);
+  tested at the assembly boundary.
+- **M4** — `putReadmapArtifact` gained an `immutable` option
+  (`allowOverwrite: false` for `evidence`/`signals`; pre-existing immutable
+  artifacts are kept on retry instead of failing the write).
+- **M5** — Gemini schema subset + live-400 fallback (applied 2026-09-15,
+  verified live; unchanged this session).
+- **H2** — READMAP UI restyled onto the existing `globals.css` design system
+  (Tailwind classes removed from `ReadmapApp.tsx`; a READMAP block appended to
+  `globals.css` so `.notice`, `.claim`, `.drawer`, etc. actually exist).
+- **H3** — determinate progress: `onProgress` in `readmap-client.ts` derives a
+  percentage from the polled unit counts; `ProcessingView` renders a real
+  `.progress-fill` bar (indeterminate fallback when no counts).
+- **H4** — `ReadmapResult` now renders the coverage line, the read/skip guide
+  (`actuallyRead`/`safelySkip`), `rememberThese`, and `documentShape` the
+  pipeline already produced (component-level test pending — no React test
+  harness exists yet; noted for the E2E).
+- **L1** — one bounded 429/503 retry with backoff in the Gemini adapter
+  (`transientRetryBackoffMs` test seam). Two tests added.
+- **L2** — `READMAP_MAX_JOB_COST_USD` enforced in the pipeline: extraction and
+  verification stop at the cap with a disclosed limitation → PARTIAL_READY.
+- **L3** — no redundant third grounding-gate pass (the recheck is reused).
+- **L4** — status-route comment fixed (`STARTING`, not `UNKNOWN`).
+- **L5** — dead `locatedTierClaims` deleted from `claim-parser.ts`.
+- **L7** — `segment.ts` word count is prose-only (anchors/`---` skipped,
+  table pipes not counted as words).
+
+Not implemented (documented design debt, no patch in the review's fix pack):
+**M2** (compressor nesting/selection brittleness — the review only sketches
+the deterministic-tier-construction alternative) and **L6** beyond the route
+test added for C1 (no UI-component test harness exists).
+
+Verification this session: `npm run typecheck` clean; `npm run test`
+**202/202 pass** (181 prior + 21 new: 6 numeric-guard, 2 mapWithConcurrency,
+2 checkpoint, 1 thePoint-usability, 2 artifact-io, 2 unit-path, 2 start-route,
+2 gemini-429, plus the pre-existing 429 test updated for the retry contract).
+`npm run lint` could not run (eslint not installed in this environment).
+Converter untouched; smoke tests not re-run (no converter change).
+
 ## Next approved task
 
 **Phase 1 exit — acceptance run + independent review**: the full §9 run from

@@ -1,210 +1,122 @@
-# Handoff â€” READMAP build, 13 September 2026 (updated after live E2E attempt)
+﻿# Handoff — READMAP build, 16 September 2026 (Phase-1 review remediation applied)
 
 This is the handoff for the READMAP work on branch `feature/readmap-mvp`.
-It replaces the previous version in full. **Read it top to bottom before
+It replaces the 13 September handoff in full. **Read it top to bottom before
 changing anything.** The original converter handoff is `HANDOFF.md`
 (2 September 2026). This document is written for a fresh session with no
-chat history, and specifically for a **review of the Phase 1 build**, which
-the owner has judged not good enough yet â€” see Â§5, "The open issue", and
-Â§6, "Where to scrutinise the code".
+chat history.
+
+The 13 September handoff handed off a Phase-1 build the owner judged "not
+good enough yet" and an independent code review (`docs/readmap/PHASE_1_CODE_REVIEW.md`,
+15 September). That review's §6 fix pack has now been **implemented and committed**
+(see §2). This handoff is the post-remediation state: what is done, what is
+verified, and the small set of tasks that remain before Phase 1 can exit.
 
 ## 1. State at a glance
 
 | Item | State |
 |---|---|
-| Branch | `feature/readmap-mvp`, pushed to origin at `f115afc`, PR open against `main` |
-| `main` | Untouched at `86feb79` â€” **pushing `main` deploys the production converter** |
-| Build increments | 0 (audit) + 5 increments, all committed; see Â§2 |
-| Offline acceptance checks (plan Â§9) | **1â€“10 and 12 pass**; recorded in `docs/readmap/IMPLEMENTATION_STATUS.md` Â§"Phase 1 acceptance run" |
-| Live E2E (plan check 11) | **BLOCKED mid-conversion** â€” see Â§5. This is the reason for the review. |
-| Converter | Frozen, zero modifications; 336/336 Python tests green throughout |
-| Frontend tests | 179/179 green; typecheck clean; production build green |
-| Model calls | **Zero tokens ever spent.** The Gemini adapter has never talked to the real API. |
+| Branch | `feature/readmap-mvp`, **6 new commits on top of `948803e`** (see §2); not yet pushed |
+| `main` | Untouched at `86feb79` — **pushing `main` deploys the production converter** |
+| Phase-1 review fix pack | **Implemented and committed** per `PHASE_1_CODE_REVIEW.md` §6, in its §5 order (6 commits). M5 was already applied at `948803e`. |
+| Frontend tests | **202/202 green** (was 181; +21 new); typecheck clean |
+| Converter | Frozen, zero modifications; unchanged this session |
+| Live E2E (plan check 11) | **Still not run** — now unblocked by H1 (CDN cache), C3 (concurrency/timeout), and M5 (Gemini schema). This is the one remaining Phase-1 exit item. See §3. |
+| Model calls | **Zero tokens ever spent.** All tests offline. First live Gemini calls happen in the pending E2E. |
+| `npm run build` | **Not run this session** — run before exit (see §3) |
+| `npm run lint` | **Could not run** — eslint is not installed in this environment; run before exit |
 
 ## 2. Commit ledger (all on `feature/readmap-mvp`)
 
+Prior commits (unchanged from the 13 September handoff): `790bb53` -> `f115afc`,
+ending at `948803e` "Fix READMAP Gemini adapter schema rejection (M5) + add
+Phase 1 code review" (M5 was applied there, uncommitted at review time, now
+committed). The review itself lives at `docs/readmap/PHASE_1_CODE_REVIEW.md`.
+
+Remediation commits (this session, 2026-09-16), in the review's §5 order:
+
 | Commit | What |
 |---|---|
-| `790bb53` | Phase 0: audit, ADRs 001â€“007, charter scoping (D-016), control files |
-| `8a55fb7` | Increment 1: evidence schemas + segmentation, 13 tests |
-| `08447dd` | Increment 2: model client layer â€” spec Â§5 `StructuredModelClient`, Gemini over plain `fetch` (no SDK), fail-closed dev adapter, per-role router, 29 tests |
-| `cd285a9` | Increment 3: agent skeletons â€” signal schema, versioned prompts (TS modules), mapper/extractor/skeptic/compressor with deterministic contract checks, 32 tests |
-| `07b38ec` | Increment 4: orchestration pipeline + deterministic grounding gate (spec Â§11 items 1â€“3, 5â€“10; Â§11.4 deferred to Phase 3), ReadMap/status schemas, 12 tests |
-| `4a5a49e` | Increment 5: Blob artifacts (ADR-004), 4 API routes, `/readmap` UI, retention sweep extension, 5 tests |
-| `da40c75` | Acceptance run (offline): eval-harness port with synthetic-trap injection tests, fail-closed model pre-flight, scanned-document honesty pin |
-| `8ee73fb` | Local runbook: dev proxy to converter, launcher script, health pre-flight, upload progress |
-| `f115afc` | Fail fast on definitive conversion refusals (4xx aborts the status poll) |
+| `473b384` | H1: `useCache: !fresh` in `presignedGet` (the inverted CDN-cache flag that reintroduced D-005's "looks stuck" bug). Same commit lands the C2 checkpoint helpers (`readmapUnitPath`/`getReadmapUnit`/`putReadmapUnit`) and M4 immutability on `putReadmapArtifact`, which later commits depend on. Test: `artifact-io.test.ts` (mocked Blob asserts the flag). |
+| `f000512` | C1: the idempotent-reuse branch now reads the persisted `ReadMapV1` itself (the old `existing?.readmap` check was dead code — every retry re-billed). Returns `PARTIAL_READY` from the stored status. Wires C2 checkpoints + M4 immutable persist. Route-level test `start-route.test.ts` asserts `reused:true` and that the pipeline never runs. |
+| `e417258` | C3: VERIFYING parallelized via `mapWithConcurrency` (`VERIFY_CONCURRENCY=6`, order-preserving); `MAX_CANDIDATE_SIGNALS` 100->40 with the warning kept. Same commit: C2 `cachedUnit` (checkpoint hit -> zero usage, a retry never re-bills), M3 (thePoint only cites a usable signal), L2 (`READMAP_MAX_JOB_COST_USD` enforced -> honest PARTIAL_READY), L3 (no redundant third gate pass). Tests for concurrency order/limit, zero-call checkpointed re-runs, thePoint usability. |
+| `7cafe3f` | M1: numeric guard compares canonical VALUES (`$1.5bn` = `1.5 billion`, `12%` = `12 percent`, `1,000` = `1000`) — no more false-positive NUMBER_DROPPED on rewordings. L5: deleted the unused `locatedTierClaims`. Tests in `numeric-guard.test.ts`. |
+| `07b41de` | H2/H3/H4: de-Tailwinded `ReadmapApp` onto the existing `globals.css` design system (the project has no Tailwind; the shell was unstyled) + appended a READMAP CSS block so the child classes exist; determinate progress (`onProgress` from polled unit counts -> a real `.progress-fill` bar); `ReadmapResult` now renders the coverage line, the read/skip guide, `rememberThese`, and `documentShape` the pipeline already produced. |
+| `cd7e872` | L1: one bounded 429/503 retry with backoff in the Gemini adapter. L4: status-route comment (`STARTING`, not `UNKNOWN`). L7: prose-only word count (anchors/`---` skipped, table pipes not counted). |
 
-## 3. Architecture in one paragraph
+## 3. Pending tasks (the only things left before Phase 1 exits)
 
-Upload → the EXISTING Mark It Down conversion (browser → Blob → converter
-container → Blob result `.md`, unchanged and AI-free) → `/api/readmap/start`
-downloads that `.md`, segments it into page/slide-anchored evidence blocks
-(`ConvertedDocumentV1`), and runs the pipeline: Mapper → Signal Extractor →
-Skeptic → Compressor, each a thin unit over a provider-neutral
-`StructuredModelClient` (Gemini over plain `fetch`, one schema-repair attempt,
-per spec §5/§10). A deterministic grounding gate (spec §11 items 1–3, 5–10;
-§11.4 numeric validation explicitly deferred to Phase 3) validates the
-assembled `ReadMapV1` before anything is returned. Artifacts persist to Blob
-per ADR-004. All docs: `docs/readmap/` (status, ADRs 001–009, Phase 1 plan).
+These are ranked. Do them in order.
 
-## 4. Verified by tests vs. NOT verified
+1. **Push the branch** — `git push origin feature/readmap-mvp` (the 6 remediation
+   commits are local only). Never push `main`.
+2. **Run `npm run build`** in `frontend/` — production build was not run this
+   session. Typecheck is clean and the route + UI compile, but a green build
+   is a Phase-1 exit requirement (ENGINEERING_SPEC / repo AGENTS.md).
+3. **Run `npm run lint`** — eslint is not installed in this environment, so it
+   could not be verified. Install/run it before exit; fix any findings.
+4. **The live E2E (plan check 11)** — the one remaining acceptance item. It
+   is now unblocked by H1 (status polling no longer looks stuck), C3 (a real
+   document fits the 300s ceiling), and M5 (the first Gemini call no longer
+   400s on `additionalProperties`/`prefixItems`). Runbook in §5. This is the
+   first time any model token will be spent.
+5. **Then the independent Phase-1 review** (`prompts/02_REVIEW_PHASE_1.md`)
+   with fresh eyes before **any** Phase 2 discussion.
 
-Verified offline (automated): segmentation against the converter's real
-Markdown grammar; agent contracts (verbatim-quote citations, pipeline-assigned
-signal ids, bounded skeptic input, tier nesting); grounding gate checks (spec
-§11 items 1–3, 5–10); pipeline sequencing with idempotency keys and
-evidence-persisted-before-model-calls; artifact path scoping; fail-closed
-model configuration (`modelConfigured()`); eval-harness synthetic traps
-(injection-obeying outputs flagged); scanned-document honesty (converter's
-real §36 warning → PARTIAL_READY, never READY).
+## 4. What is NOT implemented (documented design debt, do not silently skip)
 
-NOT verified — this is the heart of the review:
+- **M2** — compressor nesting/selection brittleness (`assertTierNesting`/
+  `assertSelectionsResolve` throw inside the compressor unit -> the pipeline
+  `catch` returns FAILED; a `TIER_NESTING` failure is not repairable). The
+  review only **sketches** the fix (construct nested tiers deterministically
+  in code from a single ranked signal list, instead of trusting the model to
+  nest). There is no drop-in patch in the review's §6, so it was not
+  implemented. Expect frequent total failures on first live runs until this
+  is addressed; consider it the most likely live-E2E failure mode after
+  conversion succeeds.
+- **L6 (UI-component tests)** — there is no React test harness in the repo
+  (vitest is configured for `lib/**/*.test.ts` only). The route-level C1 test
+  was added; the UI rendering (H4) is verified by the pipeline producing the
+  data and a manual E2E note, not an automated component test. The review
+  allowed "a manual E2E note" for H4.
+- **Resumable-stage split (ADR-005)** — C2's checkpoints make a retry not
+  re-bill, but a single run still dies if it exceeds the 300s ceiling mid-way;
+  C3's concurrency + the 40-candidate cap are the Phase-1 mitigation, not the
+  durable fix. The durable fix is the resumable-stage split, which C2's
+  checkpoints now enable.
 
-1. **The Gemini adapter has never made a real API call.** Request shape
-   (`responseMimeType` + `responseSchema`), the Zod-to-JSON-Schema
-   conversion (`const` to `enum`, keyword pruning), auth header, and error
-   mapping are untested against the live endpoint. A first-contact 400 from
-   Gemini on the schema is a plausible failure offline tests cannot catch.
-2. **The live E2E has never completed** (see §5).
-3. The dev adapter cannot serve a live E2E by design — it only returns
-   pre-registered fixtures and has no runtime registration path — so live
-   testing REQUIRES a real `GEMINI_API_KEY`.
-4. Prompt quality is untested against real model output; the prompts are
-   spec §24 constraint skeletons.
+## 5. Environment and runbook (owner's machine)
 
-## 5. THE OPEN ISSUE — live E2E blocked mid-conversion
-
-Timeline of the owner's first live run (2026-09-13, localhost):
-
-1. `/readmap` 404'd — cause: port 3000 was serving the **market-intel suite**
-   (a different repo). Fixed by running the mark-it-down frontend on port
-   3001.
-2. Upload froze at "Preparing" for many minutes — cause: the conversion POST
-   goes to `/converter/v1/convert` on the same origin; `next dev` has no such
-   route (production routes it via `vercel.json` to the converter container)
-   and the converter service was not running. The status poll correctly
-   tolerates a missing status object — which locally meant a silent
-   12-minute wait. Fixed in `8ee73fb`: dev proxy in `next.config.ts`
-   (`MARK_IT_DOWN_BASE_URL=http://localhost:8000` in `frontend/.env.local`),
-   launcher `run-converter-local.ps1` (injects the matching
-   `JOB_SIGNING_SECRET` into the converter process), health pre-flight, and
-   upload progress in the UI.
-3. **CURRENT BLOCKER**: on retry, upload reached **100%**, then the UI froze
-   at "Uploading your document... 100 percent" — no converter stage
-   (accepted / downloading / ...) was ever observed and no error appeared.
-   Root cause **unconfirmed**. Fix `f115afc` (pushed AFTER this run) makes a
-   definitive 4xx refusal fail immediately instead of hanging; the retry
-   under `f115afc` has NOT been done yet.
-
-Ranked hypotheses, each with the check that confirms it:
-
-- **H1 - job-token secret mismatch (most likely).** The converter verifies
-  the frontend-minted HMAC token with its own `JOB_SIGNING_SECRET`. If the
-  converter was started manually instead of via `run-converter-local.ps1`,
-  it has no/mismatched secret, giving 401/403, which pre-`f115afc` hung
-  silently. CHECK: the uvicorn access-log line for
-  `POST /converter/v1/convert` — the status code decides (401/403 = H1;
-  422 = malformed request; 200 = accepted, look at H2/H3).
-- **H2 - converter crashed or stalled after accepting.** A 4.5 MB annual
-  report is a heavy PDF; `MAX_LOCAL_CONCURRENT_CONVERSIONS=1` plus a wedged
-  prior job would stall without ever publishing a stage. CHECK: uvicorn log;
-  `/converter/health` while stalled; python process CPU.
-- **H3 - status publishing broken locally.** The converter publishes stages
-  by PUT to a presigned Blob URL; if that write failed, no stage would ever
-  appear while conversion proceeds. CHECK: after a retry, look for
-  `jobs/<date>/<job-id>/status.json` and `readmap/` blobs in the Vercel Blob
-  store; check the uvicorn log for Blob write errors.
-- **H4 - the retry never ran under `f115afc`.** The freeze predates the fix;
-  the browser tab needs a refresh and the retry repeated. CHECK: retry once
-  on current HEAD and read the immediate error, if any.
-
-Next diagnostic step, in order: retry the upload on current HEAD; capture
-(a) the immediate browser error if any, (b) the uvicorn access-log line for
-the convert POST, (c) whether `jobs/<date>/<job-id>/status.json` appears in
-Blob. These three facts decide between H1-H4. The converter terminal's log
-lines are shape-only and safe to share.
-
-## 6. Where to scrutinise the code (reviewer checklist)
-
-The owner judged the Phase 1 build "not good enough" after the live run
-froze. Beyond §5's blocker, these are the areas a reviewer should examine
-hardest, ranked by risk:
-
-1. `frontend/lib/readmap/models/gemini.ts` — never exercised against the real
-   API. Specifically: (a) the `responseSchema` produced by
-   `toGeminiResponseSchema` — Gemini may reject pruned schemas or the newer
-   AQ-prefixed key format may behave differently; (b) the repair prompt
-   construction; (c) 429/5xx handling (no retry/backoff at all — one attempt,
-   one repair, fail).
-2. `frontend/lib/readmap/orchestration/pipeline.ts` — runs minutes of
-   sequential model calls inside ONE request handler (`maxDuration = 300`).
-   Local dev is unbounded, but a Vercel function ceiling may kill it
-   mid-flight (plan ADR-002 accepts this for Phase 1 and documents the stale
-   status consequence). Also: candidate-signal cap discards silently-capped
-   sections with only a warning; extraction chunking is one-block-stream
-   sequential (no parallelism).
-3. `frontend/app/api/readmap/start/route.ts` — synchronous long request; the
-   idempotency keys exist but there is no checkpoint persistence yet (a
-   crashed run re-runs everything); `modelConfigured()` pre-flight covers
-   config but not quota/cost.
-4. `frontend/lib/readmap/evals/` — the harness port is verbatim except one
-   documented type-level adaptation; the offline "obeying output" test proves
-   the scorer catches bad text but does NOT prove the agents won't produce it
-   — that needs the live E2E.
-5. Prompt files (`frontend/lib/readmap/prompts/`) — constraint skeletons;
-   real-output quality, extraction precision/recall, and compressor ranking
-   are entirely unmeasured.
-6. `frontend/lib/readmap/readmap-client.ts` — the polling lifecycle uses
-   `window.setInterval` and the start request has no timeout of its own;
-   verify cancellation and tab-background behaviour.
-7. Cost controls — `READMAP_MAX_JOB_COST_USD` is reserved in `.env.example`
-   but NOT implemented; a large document could spend freely within the
-   candidate cap.
-
-## 7. Environment and runbook (owner's machine)
-
-- Repo: `c:\Users\Test User\Documents\mark-it-down` (NOT the pack folder
+- Repo: `c:\Users\test user\documents\mark-it-down` (NOT the pack folder
   `READMAP_COMPLETE_AGENT_BUILD_PACK`, which stays untracked).
 - Frontend: `frontend/`, Next 15, runs on port 3001 (3000 is occupied by the
   market-intel suite): `cd frontend && npm run dev -- -p 3001`.
 - Converter: `converter/`, Python 3.14 venv, start with
   `powershell -File run-converter-local.ps1` (repo root) — serves
   `127.0.0.1:8000` with `JOB_SIGNING_SECRET` injected from
-  `frontend/.env.local`. Pandoc missing locally → DOCX fails, PDF/PPTX fine.
-- `frontend/.env.local` (gitignored) currently holds: APP_PASSWORD,
+  `frontend/.env.local`. Pandoc missing locally -> DOCX fails, PDF/PPTX fine.
+- `frontend/.env.local` (gitignored) holds: APP_PASSWORD,
   BLOB_READ_WRITE_TOKEN, CRON_SECRET, JOB_SIGNING_SECRET, VERCEL_OIDC_TOKEN,
   GEMINI_API_KEY (newer Google "AQ.A..." key format — valid), and
   MARK_IT_DOWN_BASE_URL=http://localhost:8000. Never print these values;
   presence/format checks only.
 - Pip: `--only-binary=:all:` (enforced by converter/.venv/pip.ini). npm:
   `--ignore-scripts` if installing.
-- The vitest config now maps the repo's `@/` alias; `npm run test` runs
-  179 tests; typecheck and `npm run build` are green at `f115afc`.
+- E2E reproduction (§3 task 4): two terminals — converter (`run-converter-local.ps1`)
+  and frontend (`npm run dev -- -p 3001`). Upload a real PDF at
+  `http://localhost:3001/readmap`. Watch: (a) the status poll no longer looks
+  stuck (H1); (b) the first Gemini call does not 400 (M5); (c) VERIFYING
+  finishes inside the ceiling on a non-trivial document (C3); (d) the result
+  renders the coverage line, read/skip guide, rememberThese, and the evidence
+  drawer resolves (H4); (e) the depth slider moves with zero network calls.
+  Capture any reader-facing error. The first live run is also the first time
+  M2 is likely to surface — if the compressor fails to nest, see §4.
 
-## 8. Suggested order of work for the next session
+## 6. Cost ledger and session log
 
-1. Read `docs/readmap/IMPLEMENTATION_STATUS.md`, then §5 above, then
-   `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md` §9.
-2. Reproduce the blocker: two terminals per §7; upload the same PDF; capture
-   the uvicorn access-log status for the convert POST (decides H1-H4).
-3. Fix whatever it shows; the fail-fast net (f115afc) will surface the real
-   error in seconds instead of minutes.
-4. Once conversion completes, the pipeline's first live Gemini call happens —
-   watch for adapter/schema first-contact failures (§6 item 1) and capture
-   any reader-facing error.
-5. Complete E2E (plan check 11): result renders, slider moves with zero
-   network calls, evidence drawer resolves, refresh keeps state.
-6. Then run the independent Phase 1 review (`prompts/02_REVIEW_PHASE_1.md`)
-   with fresh eyes before ANY Phase 2 discussion.
-
-## 9. Cost ledger and session log
-
-- Cost: one npm dependency (`zod`, MIT) in Phase 1 so far; **zero model
-  tokens ever spent** (all tests offline). First live calls happen in the
-  blocked E2E.
-- Session log: Phase 0 `790bb53`; increment 1 `8a55fb7`; increment 2
-  `08447dd`; increment 3 `cd285a9`; increment 4 `07b38ec`; increment 5
-  `4a5a49e`; acceptance-offline `da40c75`; local runbook `8ee73fb`; fail-fast
-  `f115afc`; this handoff `(this commit)`.
-
+- Cost: one npm dependency (`zod`, MIT) in Phase 1 so far; **zero model tokens
+  ever spent** (all tests offline). First live calls happen in the pending E2E.
+- Session log: Phase 0 `790bb53`; increments 1-5 `8a55fb7`...`4a5a49e`;
+  acceptance-offline `da40c75`; local runbook `8ee73fb`; fail-fast `f115afc`;
+  M5 + review `948803e`; remediation `473b384`/`f000512`/`e417258`/`7cafe3f`/
+  `07b41de`/`cd7e872`; this handoff `(this commit)`.
