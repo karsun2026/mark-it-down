@@ -22,8 +22,11 @@ import { requireSession } from "@/lib/guard";
 import { checkConversionRateLimit, warnIfDegraded } from "@/lib/rate-limit";
 import {
   getReadmapArtifact,
+  getReadmapUnit,
   putReadmapArtifact,
+  putReadmapUnit,
   readmapArtifactPath,
+  readmapUnitPath,
 } from "@/lib/readmap/artifacts";
 import { verifyReadmapAccess, modelConfigured } from "@/lib/readmap/route-access";
 import { getClientForTask } from "@/lib/readmap/models/model-router";
@@ -34,6 +37,8 @@ import {
 } from "@/lib/readmap/orchestration/pipeline";
 import { checksumOfMarkdown } from "@/lib/readmap/orchestration/stages";
 import type { ReadMapStatusV1 } from "@/lib/readmap/schemas/status";
+import type { ReadMapV1 } from "@/lib/readmap/schemas/readmap";
+import type { CompressedTiersV1 } from "@/lib/readmap/schemas/signal";
 import type { ConvertedDocumentV1 } from "@/lib/readmap/schemas/evidence";
 
 export const runtime = "nodejs";
@@ -106,16 +111,27 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // A completed analysis already exists for this exact result: return it
-  // instead of re-billing the pipeline (idempotent retry, plan §4).
-  const existing = await getReadmapArtifact<{ readmap: unknown }>(
+  // instead of re-billing the pipeline (idempotent retry, plan §4). The
+  // pipeline persists the ReadMapV1 object itself at readmap.v1.json, so its
+  // presence is the completion signal — never a `.readmap` wrapper (§6-C1).
+  const existingReadmap = await getReadmapArtifact<ReadMapV1>(
     paths["readmap.v1.json"] as string,
   );
-  if (existing?.readmap) {
+  if (existingReadmap) {
+    const existingTiers = await getReadmapArtifact<CompressedTiersV1>(
+      paths["tiers.v1.json"] as string,
+    );
+    const existingStatus = await getReadmapArtifact<{ stage?: string }>(
+      paths["status.v1.json"] as string,
+      { fresh: true },
+    );
     return NextResponse.json({
-      status: "READY",
-      reused: true,
+      status: existingStatus?.stage === "PARTIAL_READY" ? "PARTIAL_READY" : "READY",
       jobId,
-      ...(existing as { readmap: unknown }),
+      reused: true,
+      readmap: existingReadmap,
+      tiers: existingTiers ?? null,
+      warnings: existingReadmap.coverage.limitations,
     });
   }
 
@@ -157,7 +173,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     persistArtifact: async (name, value) => {
       const path = paths[name as keyof typeof paths];
       if (!path) throw new Error(`unknown artifact ${name}`);
-      await putReadmapArtifact(path, value);
+      // §6-M4: evidence and signals are immutable snapshots — never
+      // overwritten. On a retried run the same content is already there
+      // (pinned by checksum + pipeline version), so a pre-existing
+      // artifact is kept as-is instead of failing the write.
+      const immutable = name === "evidence.v1.json" || name === "signals.v1.json";
+      if (immutable) {
+        const existing = await getReadmapArtifact(path);
+        if (existing !== null) return;
+      }
+      await putReadmapArtifact(path, value, { immutable });
+    },
+    // §6-C2: per-unit checkpoints under the idempotency key, so a retried
+    // or resumed run reuses completed units instead of re-billing them.
+    checkpoint: {
+      get: async <T,>(key: string) => {
+        const unitPath = readmapUnitPath(resultPathname, key);
+        if (!unitPath) return null;
+        return getReadmapUnit<T>(unitPath);
+      },
+      put: async (key: string, value: unknown) => {
+        const unitPath = readmapUnitPath(resultPathname, key);
+        if (!unitPath) return;
+        await putReadmapUnit(unitPath, value);
+      },
     },
   });
 
