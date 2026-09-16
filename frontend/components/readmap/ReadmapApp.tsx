@@ -34,6 +34,7 @@ export default function ReadmapApp() {
   const [file, setFile] = useState<File | null>(null);
   const [stageLabel, setStageLabel] = useState<string>("");
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
+  const [percent, setPercent] = useState<number | null>(null);
   const [outcome, setOutcome] = useState<ReadmapOutcome | null>(null);
   const [preset, setPreset] = useState<CompressionPreset>("READMAP");
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
@@ -59,6 +60,7 @@ export default function ReadmapApp() {
     setPhase("working");
     setStageLabel("Preparing");
     setUploadPercent(null);
+    setPercent(null);
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -79,12 +81,16 @@ export default function ReadmapApp() {
       const result = await runReadmapFlow(selected, controller.signal, {
         onStage: (label) => {
           setStageLabel(label);
+          setPercent(null);
           // The converter's own stages mean the upload has finished.
           if (label !== "Preparing") setUploadPercent(null);
         },
         onUploadProgress: (percentage) => {
           setUploadPercent(percentage);
           setStageLabel(`Uploading your document… ${percentage}%`);
+        },
+        onProgress: (pct) => {
+          setPercent(pct);
         },
       });
       setUploadPercent(null);
@@ -114,18 +120,18 @@ export default function ReadmapApp() {
     setFile(null);
     setOutcome(null);
     setStageLabel("");
+    setUploadPercent(null);
+    setPercent(null);
     setError(null);
     setPreset("READMAP");
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">READMAP</h1>
-        <p className="text-sm text-gray-600">
-          Drop something long. Get the parts worth your time.
-        </p>
-        <p className="text-xs text-gray-500">
+    <main>
+      <header>
+        <h1>READMAP</h1>
+        <p className="muted">Drop something long. Get the parts worth your time.</p>
+        <p className="muted">
           PDF, Word, and PowerPoint up to 100 MB. Your document is converted to
           text, analysed, and deleted after processing; results are kept for a
           limited period. Every statement below links to the document text it
@@ -147,6 +153,7 @@ export default function ReadmapApp() {
         <ProcessingView
           filename={file ? `${file.name} · ${formatBytes(file.size)}` : ""}
           stageLabel={stageLabel}
+          percent={uploadPercent ?? percent}
           onCancel={cancel}
         />
       )}
@@ -155,24 +162,17 @@ export default function ReadmapApp() {
         <>
           <CompressionControl preset={preset} onChange={setPreset} />
           <ReadmapResult outcome={outcome} preset={preset} />
-          <button
-            type="button"
-            onClick={reset}
-            className="self-start rounded border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
-          >
+          <button type="button" onClick={reset}>
             Analyse another document
           </button>
         </>
       )}
 
       {phase === "error" && error && (
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <p className="font-medium">{error.message}</p>
-          <button
-            type="button"
-            onClick={reset}
-            className="mt-3 rounded border border-red-300 px-3 py-1.5 text-sm hover:bg-red-100"
-          >
+        <div className="error-panel" role="alert">
+          <p className="error-title">Something went wrong</p>
+          <p>{error.message}</p>
+          <button type="button" onClick={reset}>
             Start over
           </button>
         </div>

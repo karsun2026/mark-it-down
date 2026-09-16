@@ -29,6 +29,12 @@ export interface ReadmapOutcome {
 export interface ReadmapFlowCallbacks {
   onStage?: (label: string) => void;
   onUploadProgress?: (percentage: number) => void;
+  /**
+   * Determinate progress (0-100) for the analysis wait screen, derived from
+   * the polled status object's unit counts (§6-H3). Null when the current
+   * stage has no unit counts — the UI falls back to an indeterminate bar.
+   */
+  onProgress?: (percent: number | null) => void;
 }
 
 export class ReadmapFlowError extends Error {
@@ -126,7 +132,18 @@ export async function runReadmapFlow(
   const { jobToken, resultPathname } = outcome;
   const pollTimer = window.setInterval(() => {
     void postJson<ReadMapStatusV1>("/api/readmap/status", { jobToken, resultPathname }, signal)
-      .then((status) => callbacks.onStage?.(labelFor(status)))
+      .then((status) => {
+        callbacks.onStage?.(labelFor(status));
+        // §6-H3: a real percentage from the stage's unit counts, falling back
+        // to the stage's fixed progress, falling back to indeterminate.
+        const pct =
+          status.unitsTotal > 0
+            ? Math.round((status.unitsDone / status.unitsTotal) * 100)
+            : typeof status.progress === "number"
+              ? Math.round(status.progress * 100)
+              : null;
+        callbacks.onProgress?.(pct);
+      })
       .catch(() => {
         /* transient poll failures are normal; the start request decides */
       });
