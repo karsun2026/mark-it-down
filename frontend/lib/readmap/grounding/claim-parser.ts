@@ -48,21 +48,3 @@ export function locatedFactualClaims(readmap: ReadMapV1): LocatedClaim[] {
   );
   return located;
 }
-
-/** Claims rendered from compression tiers (each tier entry cites one signal). */
-export function locatedTierClaims(
-  readmap: ReadMapV1,
-  tiers: { tiers: Record<string, { signalId: string; text: string }[]> },
-  tierNames: readonly string[],
-): LocatedClaim[] {
-  const located: LocatedClaim[] = [];
-  for (const tierName of tierNames) {
-    tiers.tiers[tierName as keyof typeof tiers.tiers]?.forEach((entry, index) =>
-      located.push({
-        location: `tiers.${tierName}[${index}]`,
-        claim: { text: entry.text, signalIds: [entry.signalId], kind: "VERIFIED" as const },
-      }),
-    );
-  }
-  return located;
-}
