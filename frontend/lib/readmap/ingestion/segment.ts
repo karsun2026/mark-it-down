@@ -145,7 +145,13 @@ export function segmentDocument(input: SegmentInput): ConvertedDocumentV1 {
     if (pageMatch) {
       pageNumber = Number(pageMatch[1]);
       slideNumber = undefined;
-      headingStack = [];
+      // Seed the section path with the page as its base. A PDF exposes no
+      // semantic markdown headings (its prose headings arrive as plain text),
+      // so without this every PDF block would carry an empty sectionPath and
+      // the mapper's real section names could not be validated against the
+      // evidence. The base sits at level 0 so a real ATX sub-heading (levels
+      // 1-6) nests under it as ["Page N", "Heading"] rather than replacing it.
+      headingStack = [{ level: 0, text: `Page ${pageNumber}` }];
       emitHeading(`Page ${pageNumber}`);
       continue;
     }
@@ -154,11 +160,13 @@ export function segmentDocument(input: SegmentInput): ConvertedDocumentV1 {
     if (slideMatch) {
       slideNumber = Number(slideMatch[1]);
       pageNumber = undefined;
-      headingStack = [];
       const title = slideMatch[2]?.trim();
-      emitHeading(
-        title ? `Slide ${slideNumber} — ${title}` : `Slide ${slideNumber}`,
-      );
+      const label = title
+        ? `Slide ${slideNumber} — ${title}`
+        : `Slide ${slideNumber}`;
+      // Same reasoning as pages: the slide is the base of the section path.
+      headingStack = [{ level: 0, text: label }];
+      emitHeading(label);
       continue;
     }
 

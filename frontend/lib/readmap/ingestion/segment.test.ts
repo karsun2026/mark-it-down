@@ -106,9 +106,18 @@ describe("segmentDocument — PDF grammar", () => {
     );
   });
 
-  it("carries section paths from headings", () => {
-    expect(doc.blocks[6]?.sectionPath).toEqual(["Risks"]);
-    expect(doc.blocks[7]?.sectionPath).toEqual(["Risks"]);
+  it("anchors PDF blocks to their page as the base section path", () => {
+    // The page anchor is the base of every block's section path (including the
+    // `## Page N` heading block itself), so a PDF's blocks are never orphaned
+    // with an empty sectionPath. A real ATX sub-heading nests beneath the page.
+    expect(doc.blocks[0]?.sectionPath).toEqual(["Page 1"]); // the "Page 1" heading block
+    expect(doc.blocks[1]?.sectionPath).toEqual(["Page 1"]); // body under page 1, no sub-heading
+    expect(doc.blocks[3]?.sectionPath).toEqual(["Page 1"]); // the table, still under page 1
+  });
+
+  it("nests real headings under the page in the section path", () => {
+    expect(doc.blocks[6]?.sectionPath).toEqual(["Page 2", "Risks"]);
+    expect(doc.blocks[7]?.sectionPath).toEqual(["Page 2", "Risks"]);
     expect(doc.blocks[7]?.normalizedText).toBe(
       "Management expects moderate growth.",
     );
@@ -133,6 +142,11 @@ describe("segmentDocument — PPTX grammar", () => {
     expect(doc.blocks.every((b) => b.pageNumber === undefined)).toBe(true);
     expect(doc.blocks.slice(3).every((b) => b.slideNumber === 2)).toBe(true);
     expect(doc.warnings).toEqual([]);
+  });
+
+  it("anchors slide blocks to the slide as their base section path", () => {
+    expect(doc.blocks[1]?.sectionPath).toEqual(["Slide 1"]);
+    expect(doc.blocks[4]?.sectionPath).toEqual(["Slide 2 — Revenue"]);
   });
 });
 

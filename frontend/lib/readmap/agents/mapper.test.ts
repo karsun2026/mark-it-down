@@ -65,7 +65,36 @@ describe("runMapper", () => {
     expect(calls[0]?.system).toContain("Preserve dissenting or contradictory sections");
   });
 
-  it("fails the unit when the mapper invents a section path", async () => {
+  it("rebinds a prose section heading to its evidence anchor (the PDF case)", async () => {
+    // A PDF exposes only a page anchor; the model names the section by its
+    // prose heading. The heading text lives in the page's block, so it resolves.
+    const pdfDoc = ConvertedDocumentV1Schema.parse({
+      schemaVersion: "1.0",
+      document: { filename: "report.pdf", sourceType: "pdf", pagesOrSlides: 1, wordCount: 20 },
+      blocks: [
+        block("b1", "Executive Summary\nRevenue grew 12% year over year.", ["Page 1"]),
+      ],
+      warnings: [],
+    });
+    const { client } = scriptedClient({
+      documentType: "Quarterly business report",
+      mainThesisCandidates: ["Revenue grew 12%"],
+      sections: [
+        { sectionPath: ["Executive Summary"], purpose: "the headline results", signalDensity: "HIGH", value: "HIGH_VALUE" },
+      ],
+      warnings: [],
+    });
+    const run = await runMapper(client, { document: pdfDoc, idempotencyKey: "pdf:map" });
+
+    const section = run.result.value.sections[0];
+    // sectionPath is rebound to the real evidence anchor...
+    expect(section?.sectionPath).toEqual(["Page 1"]);
+    // ...and the human name is preserved in purpose for the reading guide.
+    expect(section?.purpose).toContain("Executive Summary");
+  });
+
+  it("fails the unit when the mapper invents a section not in the document", async () => {
+    // "Invented Appendix" appears in no block's text, so it cannot resolve.
     const { client } = scriptedClient({
       ...GOOD_MAP,
       sections: [
