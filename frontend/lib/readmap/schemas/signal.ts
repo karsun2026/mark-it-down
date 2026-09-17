@@ -143,7 +143,23 @@ export const TierEntrySchema = z.object({
 });
 export type TierEntry = z.infer<typeof TierEntrySchema>;
 
-/** Compressor output: selections + renderings for every nested tier. */
+/**
+ * Compressor MODEL output (compressor.v2): a single importance-ranked list of
+ * verified signals with a concise rendering each. The model only ranks and
+ * renders; the code builds the nested tiers from prefixes of this list
+ * (see agents/compressor.ts `buildTiers`), which makes the nesting invariant
+ * true by construction instead of trusting the model to nest (M2 fix).
+ */
+export const CompressorRankingV1Schema = z.object({
+  ranked: z.array(TierEntrySchema).min(1),
+});
+export type CompressorRankingV1 = z.infer<typeof CompressorRankingV1Schema>;
+
+/**
+ * Compressor BUILT output: selections + renderings for every nested tier.
+ * Produced in code from a `CompressorRankingV1`; still the type every
+ * downstream consumer (grounding gate, assembly) reads.
+ */
 export const CompressedTiersV1Schema = z.object({
   tiers: z.object({
     ONE_THING: z.array(TierEntrySchema),

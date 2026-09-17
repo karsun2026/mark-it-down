@@ -79,6 +79,18 @@ const SUPPORTED = {
   explanation: "stated directly in the cited span",
 };
 
+// The compressor MODEL now returns a single ranked list (compressor.v2); the
+// code builds the nested tiers from it. This fixture is served to the scripted
+// client for the `compression` task.
+const RANKING = {
+  ranked: [
+    { signalId: "s0001", text: "Revenue grew 12% year over year." },
+    { signalId: "s0002", text: "Supply concentration is a key risk." },
+  ],
+};
+
+// The BUILT tiers shape (CompressedTiersV1), still what assembly consumes —
+// used directly by the thePoint-usability test below.
 const TIERS = {
   tiers: {
     ONE_THING: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
@@ -160,7 +172,7 @@ const QUEUES = {
   mapper: [MAP],
   "signal-extraction": [ { signals: [GROWTH] }, { signals: [RISK] } ],
   skeptic: [SUPPORTED],
-  compression: [TIERS],
+  compression: [RANKING],
 };
 
 describe("runReadmapPipeline", () => {
@@ -184,6 +196,12 @@ describe("runReadmapPipeline", () => {
     expect(result.status).toBe("READY");
     expect(result.gate?.passed).toBe(true);
     expect(result.readmap?.thePoint.signalIds).toEqual(["s0001"]);
+    // §C-4: thePoint and the ONE_THING tier resolve to the same signal by
+    // construction (both are rank[0] of the usable-signal ranking); pin it so
+    // a future refactor cannot desync the headline from the top tier.
+    expect(result.readmap?.thePoint.signalIds[0]).toBe(
+      result.tiers?.tiers.ONE_THING[0]?.signalId,
+    );
     expect(result.readmap?.rememberThese).toHaveLength(1);
     // RISK-type verified signal lands in caution, citing its signal.
     expect(result.readmap?.caution[0]?.signalIds).toEqual(["s0002"]);
@@ -421,16 +439,7 @@ describe("scanned-document honesty (plan check 12)", () => {
       "signal-extraction": [{ signals: [GROWTH] }],
       skeptic: [SUPPORTED],
       compression: [
-        {
-          tiers: {
-            ONE_THING: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-            BRUTAL: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-            QUICK_SCAN: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-            BRIEF: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-            READMAP: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-            DEEP_DIVE: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }],
-          },
-        },
+        { ranked: [{ signalId: "s0001", text: "Revenue grew 12% year over year." }] },
       ],
     };
     const { client } = routedClient(queues);

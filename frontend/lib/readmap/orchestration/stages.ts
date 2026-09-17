@@ -9,8 +9,14 @@
 
 import { createHash } from "node:crypto";
 
-/** Bumped whenever prompt/schema versions move, invalidating old checkpoints. */
-export const PIPELINE_VERSION = "readmap-pipeline.v1";
+/**
+ * Bumped whenever prompt/schema versions move, invalidating old checkpoints.
+ * The per-stage prompt versions (e.g. compressor.v2) do NOT enter the stage key
+ * on their own, so moving one requires bumping this global version — which
+ * invalidates every stage's checkpoint, so the next run of each document
+ * re-bills the whole pipeline once. v2: compressor rank+build (M2 fix).
+ */
+export const PIPELINE_VERSION = "readmap-pipeline.v2";
 
 export interface StageKeyInput {
   checksumSha256: string;

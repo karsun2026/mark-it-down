@@ -609,11 +609,21 @@ export async function runReadmapPipeline(
           documentMap: mapper.value,
           idempotencyKey: compressorKey,
         });
-        return { value: run.result.value, usage: run.result.usage };
+        // The degraded flag rides with the cached value so a checkpoint hit
+        // still surfaces the same honest warning on a later run.
+        return {
+          value: { tiers: run.result.value, rankingDegraded: run.rankingDegraded },
+          usage: run.result.usage,
+        };
       },
     );
     addUsage(usage, compressorUnit.usage);
-    const tiers = compressorUnit.value;
+    const tiers = compressorUnit.value.tiers;
+    if (compressorUnit.value.rankingDegraded) {
+      warnings.push(
+        "Signal ranking was unavailable, so sections are ordered as they appear in the document rather than by importance.",
+      );
+    }
     await persist(input.persistArtifact, "tiers.v1.json", tiers);
 
     // GROUNDING — assemble deterministically, gate, repair by omission once.
