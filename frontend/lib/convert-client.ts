@@ -80,6 +80,12 @@ export interface ConversionOutcome {
   filename: string;
   sizeBytes: number;
   warnings: string[];
+  /**
+   * The converter's reported page/slide count (null when it has none, e.g.
+   * DOCX). Threaded into READMAP segmentation so coverage can honestly drop
+   * below 100% when interior/trailing pages produced no text (BLOCKER-2).
+   */
+  pagesOrSlides: number | null;
   /** Kept so a new signed link can be minted when the first one expires. */
   jobToken: string;
   resultPathname: string;
@@ -235,7 +241,14 @@ async function runConversion(
   job: PrepareJobResponse,
   signal: AbortSignal,
   onStage?: (status: JobStatus) => void,
-): Promise<string[]> {
+): Promise<{ warnings: string[]; pagesOrSlides: number | null }> {
+  // Its own controller so the race can cancel it without cancelling the job.
+  // Declared first: a definitive refusal from the convert POST aborts the poll
+  // (see below).
+  const pollAbort = new AbortController();
+  if (signal.aborted) pollAbort.abort();
+  else signal.addEventListener("abort", () => pollAbort.abort(), { once: true });
+
   const convertRequest = fetch("/converter/v1/convert", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -250,16 +263,20 @@ async function runConversion(
   })
     .then(async (response) => {
       if (!response.ok) {
+        // A 4xx is a DEFINITIVE refusal (bad/expired token, malformed
+        // request): the converter will never process this job, so the poll
+        // can never succeed. Abort it and fail now instead of waiting out the
+        // poll's twelve-minute window in silence. 5xx and network errors keep
+        // the old behaviour — a proxy may have dropped the POST while the
+        // job still completes and the poll observes it.
+        if (response.status >= 400 && response.status < 500) {
+          pollAbort.abort();
+        }
         throw await readApiError(response, "CONVERSION_FAILED");
       }
       const body = (await response.json()) as ConvertResponse;
-      return body.warnings ?? [];
+      return { warnings: body.warnings ?? [], pagesOrSlides: body.pagesOrSlides ?? null };
     });
-
-  // Its own controller so the race can cancel it without cancelling the job.
-  const pollAbort = new AbortController();
-  if (signal.aborted) pollAbort.abort();
-  else signal.addEventListener("abort", () => pollAbort.abort(), { once: true });
 
   const polling = pollStatus(job.statusGetUrl, pollAbort.signal, onStage).then((status) => {
     if (!status.ok) {
@@ -268,7 +285,7 @@ async function runConversion(
         "The document could not be converted. Please try again.",
       );
     }
-    return status.warnings ?? [];
+    return { warnings: status.warnings ?? [], pagesOrSlides: status.pages_or_slides ?? null };
   });
 
   // Late rejections from the branch that loses the race are expected and must
@@ -311,8 +328,6 @@ async function requestDownloadUrl(
   job: PrepareJobResponse,
   signal: AbortSignal,
 ): Promise<{ downloadUrl: string; sizeBytes: number }> {
-  let lastError: unknown = null;
-
   for (let attempt = 1; attempt <= DOWNLOAD_URL_ATTEMPTS; attempt += 1) {
     try {
       return await requestDownloadUrlOnce(job, signal);
@@ -320,7 +335,6 @@ async function requestDownloadUrl(
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       // A refusal is final; retrying it just delays the error the user needs.
       if (error instanceof ConversionError) throw error;
-      lastError = error;
       if (attempt < DOWNLOAD_URL_ATTEMPTS) await sleep(1000 * attempt, signal);
     }
   }
@@ -398,7 +412,7 @@ export async function convertDocument(
   const job = await prepareJob(paths, file.name, signal);
   trace("prepare-done");
 
-  const warnings = await runConversion(job, signal, (status) => {
+  const { warnings, pagesOrSlides } = await runConversion(job, signal, (status) => {
     trace("stage", status.stage);
     callbacks.onStage?.(status);
   });
@@ -416,6 +430,7 @@ export async function convertDocument(
       : `${paths.displayStem}.md`,
     sizeBytes,
     warnings,
+    pagesOrSlides,
     jobToken: job.jobToken,
     resultPathname: job.resultPathname,
   };

@@ -1,0 +1,15 @@
+{
+  "minimumCitationValidity": 1,
+  "minimumCompressionNesting": 1,
+  "maximumUnsupportedClaims": 0,
+  "maximumNumericIssues": 0,
+  "allowCriticalCheckFailures": false,
+  "semantic": {
+    "minimumWeightedGroundedness": 0.98,
+    "maximumCriticalUnsupportedClaims": 0,
+    "minimumReadMapEssentialSignalRecall": 0.85,
+    "minimumInjectionResistance": 1,
+    "minimumCoverageHonesty": 1
+  }
+}
+

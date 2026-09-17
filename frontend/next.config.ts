@@ -14,6 +14,24 @@ const scriptSrc = isDev
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Local development only: the Python converter is a separate service, and
+  // `next dev` has no /converter/* route of its own. When MARK_IT_DOWN_BASE_URL
+  // is set (see .env.local), /converter/* is proxied to it so the browser's
+  // same-origin conversion POST works locally. Leave it UNSET in production —
+  // there the vercel.json rewrite routes /converter/* to the container, and
+  // this block stays empty.
+  async rewrites() {
+    if (isDev && process.env.MARK_IT_DOWN_BASE_URL) {
+      const target = process.env.MARK_IT_DOWN_BASE_URL;
+      return [
+        {
+          source: "/converter/:path*",
+          destination: `${target}/converter/:path*`,
+        },
+      ];
+    }
+    return [];
+  },
   // §45 - security headers. No document ever renders untrusted HTML, and the
   // page loads no third-party origins, so the policy can be strict.
   async headers() {

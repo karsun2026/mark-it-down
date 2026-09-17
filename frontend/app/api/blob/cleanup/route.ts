@@ -11,6 +11,8 @@
 import { del, list } from "@vercel/blob";
 import { NextResponse } from "next/server";
 
+import { isReadmapArtifact, readmapRetentionMinutes } from "@/lib/readmap/artifacts";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
@@ -39,6 +41,7 @@ function isAuthorized(request: Request): boolean {
 function maxAgeMinutesFor(pathname: string): number | null {
   if (pathname.includes("/source/")) return SOURCE_MAX_AGE_MINUTES;
   if (pathname.includes("/result/")) return RESULT_MAX_AGE_MINUTES;
+  if (isReadmapArtifact(pathname)) return readmapRetentionMinutes();
   if (pathname.endsWith("/status.json")) return STATUS_MAX_AGE_MINUTES;
   return null;
 }
@@ -51,7 +54,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const now = Date.now();
-  const deleted = { source: 0, result: 0, status: 0 };
+  const deleted = { source: 0, result: 0, status: 0, readmap: 0 };
   let scanned = 0;
   let cursor: string | undefined;
   let truncated = false;
@@ -72,6 +75,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         expired.push(blob.url);
         if (blob.pathname.includes("/source/")) deleted.source += 1;
         else if (blob.pathname.includes("/result/")) deleted.result += 1;
+        else if (isReadmapArtifact(blob.pathname)) deleted.readmap += 1;
         else deleted.status += 1;
       }
 
@@ -79,7 +83,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         await del(expired);
       }
 
-      const total = deleted.source + deleted.result + deleted.status;
+      const total =
+        deleted.source + deleted.result + deleted.status + deleted.readmap;
       if (total >= MAX_DELETIONS_PER_RUN) {
         // Leave the rest for the next hourly run rather than risk a timeout.
         truncated = true;
