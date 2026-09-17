@@ -26,6 +26,15 @@ $secret = $null
 foreach ($line in Get-Content $envFile) {
     if ($line -match '^JOB_SIGNING_SECRET=(.+)$') {
         $secret = $Matches[1].Trim()
+        # Mirror dotenv (which Next uses): a value wrapped in matching single or
+        # double quotes is unquoted. Without this the converter verifies with a
+        # quoted secret while the frontend signs with the unquoted one, and every
+        # conversion fails JOB_TOKEN_INVALID with a signature mismatch.
+        if ($secret.Length -ge 2 -and
+            (($secret[0] -eq '"' -and $secret[-1] -eq '"') -or
+             ($secret[0] -eq "'" -and $secret[-1] -eq "'"))) {
+            $secret = $secret.Substring(1, $secret.Length - 2)
+        }
         break
     }
 }
