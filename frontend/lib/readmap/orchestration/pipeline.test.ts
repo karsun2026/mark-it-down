@@ -456,3 +456,37 @@ describe("scanned-document honesty (plan check 12)", () => {
     expect(result.readmap?.coverage.ratio).toBeLessThan(1);
   });
 });
+
+describe("coverage honesty with a real page count (BLOCKER-2)", () => {
+  it("drops ratio below 1 and surfaces the scan warning when interior pages produced no text", () => {
+    // The wiring fix (client -> start -> segmentDocument) threads the
+    // converter's true page count and warnings. Here we test the assembly
+    // invariant they feed: a 4-page PDF whose pages 2-4 are unreadable (only
+    // page 1 produced blocks) must NOT be reported as 100% covered.
+    const SCAN_WARNING = "Page 3 may be scanned or image-based. Text extraction may be incomplete.";
+    const document = ConvertedDocumentV1Schema.parse({
+      schemaVersion: "1.0",
+      document: { filename: "partly-scanned.pdf", sourceType: "pdf", pagesOrSlides: 4, wordCount: 12 },
+      blocks: [
+        block("b0001", "Revenue grew 12% year over year.", ["Page 1"], 1),
+        block("b0002", "Management expects moderate growth.", ["Page 1"], 1),
+      ],
+      warnings: [SCAN_WARNING], // converter warnings, threaded through segmentation
+    });
+    const signals: VerifiedSignalV1[] = [
+      { ...GROWTH, id: "s0001", skepticVerdict: "SUPPORTED", explanationCode: "OK", explanation: "stated directly" },
+    ];
+    const readmap = assembleReadmap({
+      jobId: "job1",
+      document,
+      map: MAP,
+      signals,
+      tiers: TIERS,
+      extraWarnings: [],
+    });
+    expect(readmap.coverage.totalPages).toBe(4);
+    expect(readmap.coverage.readablePages).toBe(1);
+    expect(readmap.coverage.ratio).toBeCloseTo(0.25, 5);
+    expect(readmap.coverage.limitations).toContain(SCAN_WARNING);
+  });
+});

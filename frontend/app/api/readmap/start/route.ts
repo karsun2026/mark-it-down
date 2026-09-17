@@ -49,6 +49,7 @@ interface StartRequest {
   resultPathname?: unknown;
   originalFilename?: unknown;
   pagesOrSlides?: unknown;
+  converterWarnings?: unknown;
 }
 
 function artifactMap(resultPathname: string) {
@@ -104,6 +105,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     body.pagesOrSlides > 0
       ? body.pagesOrSlides
       : null;
+  // Converter warnings (e.g. "Page N may be scanned…") must surface as coverage
+  // limitations, not be dropped — BLOCKER-2 / spec §3 principle 7.
+  const converterWarnings = Array.isArray(body.converterWarnings)
+    ? body.converterWarnings.filter((w: unknown): w is string => typeof w === "string")
+    : [];
 
   const paths = artifactMap(resultPathname);
   if (Object.values(paths).some((p) => p === null)) {
@@ -135,6 +141,31 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  // Best-effort duplicate/concurrent guard (MEDIUM-2). A completed run is
+  // served above; here we short-circuit a start that arrives while a prior run
+  // for this exact result is still in flight, so a double-submit or client
+  // retry does not launch (and re-bill) a second full pipeline. Best-effort by
+  // design: it keys off the published status, so two truly simultaneous cold
+  // starts (both before any status is written) can still both run — rare, and
+  // never worse than today. A stale status (a crashed run) falls through so a
+  // legitimate retry can proceed.
+  const TERMINAL_STAGES = new Set(["READY", "PARTIAL_READY", "FAILED"]);
+  const IN_FLIGHT_TTL_MS = 10 * 60 * 1000;
+  const inFlight = await getReadmapArtifact<{ stage?: string; updatedAt?: string }>(
+    paths["status.v1.json"] as string,
+    { fresh: true },
+  );
+  if (inFlight?.stage && !TERMINAL_STAGES.has(inFlight.stage)) {
+    const updatedAt = inFlight.updatedAt ? Date.parse(inFlight.updatedAt) : NaN;
+    const fresh = Number.isFinite(updatedAt) && Date.now() - updatedAt < IN_FLIGHT_TTL_MS;
+    if (fresh) {
+      return errorResponse(
+        "RATE_LIMITED",
+        "An analysis for this document is already in progress. Please wait for it to finish.",
+      );
+    }
+  }
+
   let markdown: string;
   try {
     const url = await signResultDownload(resultPathname);
@@ -157,6 +188,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     filename: originalFilename,
     sourceType,
     pagesOrSlides,
+    converterWarnings,
   });
 
   const result: ReadmapPipelineResult = await runReadmapPipeline({

@@ -58,8 +58,11 @@ export async function POST(request: Request, params: Params): Promise<NextRespon
     return errorResponse("JOB_TOKEN_INVALID", "artifact path could not be derived");
   }
 
-  const store = await getReadmapArtifact<{ signals: VerifiedSignalV1[] }>(signalsPath);
-  const signal = store?.signals.find((candidate) => candidate.id === signalId);
+  // signals.v1.json is persisted as a bare VerifiedSignalV1[] (pipeline.ts
+  // persists the array directly). Reading it as `{ signals }` dereferenced
+  // undefined and 500'd every evidence lookup — BLOCKER-1. Read it as an array.
+  const signals = (await getReadmapArtifact<VerifiedSignalV1[]>(signalsPath)) ?? [];
+  const signal = signals.find((candidate) => candidate.id === signalId);
   if (!signal) {
     return errorResponse("BLOB_NOT_FOUND", "unknown signal for this job");
   }

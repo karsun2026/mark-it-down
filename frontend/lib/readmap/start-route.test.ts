@@ -134,4 +134,18 @@ describe("POST /api/readmap/start (§6-C1 idempotent reuse)", () => {
     expect(body.status).toBe("PARTIAL_READY");
     expect(body.reused).toBe(true);
   });
+
+  it("short-circuits a duplicate start while a fresh run is still in flight (MEDIUM-2)", async () => {
+    const artifacts = await import("@/lib/readmap/artifacts");
+    vi.mocked(artifacts.getReadmapArtifact).mockImplementation(async (pathname: string) => {
+      if (pathname.endsWith("readmap.v1.json")) return null; // no completed run yet
+      if (pathname.endsWith("status.v1.json")) {
+        return { stage: "MAPPING", updatedAt: new Date().toISOString() }; // fresh, non-terminal
+      }
+      return null;
+    });
+    const response = await POST(startRequest());
+    // 429 RATE_LIMITED, and the pipeline (mocked to reject) is never reached.
+    expect(response.status).toBe(429);
+  });
 });

@@ -80,6 +80,12 @@ export interface ConversionOutcome {
   filename: string;
   sizeBytes: number;
   warnings: string[];
+  /**
+   * The converter's reported page/slide count (null when it has none, e.g.
+   * DOCX). Threaded into READMAP segmentation so coverage can honestly drop
+   * below 100% when interior/trailing pages produced no text (BLOCKER-2).
+   */
+  pagesOrSlides: number | null;
   /** Kept so a new signed link can be minted when the first one expires. */
   jobToken: string;
   resultPathname: string;
@@ -235,7 +241,7 @@ async function runConversion(
   job: PrepareJobResponse,
   signal: AbortSignal,
   onStage?: (status: JobStatus) => void,
-): Promise<string[]> {
+): Promise<{ warnings: string[]; pagesOrSlides: number | null }> {
   // Its own controller so the race can cancel it without cancelling the job.
   // Declared first: a definitive refusal from the convert POST aborts the poll
   // (see below).
@@ -269,7 +275,7 @@ async function runConversion(
         throw await readApiError(response, "CONVERSION_FAILED");
       }
       const body = (await response.json()) as ConvertResponse;
-      return body.warnings ?? [];
+      return { warnings: body.warnings ?? [], pagesOrSlides: body.pagesOrSlides ?? null };
     });
 
   const polling = pollStatus(job.statusGetUrl, pollAbort.signal, onStage).then((status) => {
@@ -279,7 +285,7 @@ async function runConversion(
         "The document could not be converted. Please try again.",
       );
     }
-    return status.warnings ?? [];
+    return { warnings: status.warnings ?? [], pagesOrSlides: status.pages_or_slides ?? null };
   });
 
   // Late rejections from the branch that loses the race are expected and must
@@ -406,7 +412,7 @@ export async function convertDocument(
   const job = await prepareJob(paths, file.name, signal);
   trace("prepare-done");
 
-  const warnings = await runConversion(job, signal, (status) => {
+  const { warnings, pagesOrSlides } = await runConversion(job, signal, (status) => {
     trace("stage", status.stage);
     callbacks.onStage?.(status);
   });
@@ -424,6 +430,7 @@ export async function convertDocument(
       : `${paths.displayStem}.md`,
     sizeBytes,
     warnings,
+    pagesOrSlides,
     jobToken: job.jobToken,
     resultPathname: job.resultPathname,
   };

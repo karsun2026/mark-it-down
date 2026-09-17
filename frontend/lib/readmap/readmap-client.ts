@@ -154,6 +154,10 @@ export async function runReadmapFlow(
       jobToken,
       resultPathname,
       originalFilename: file.name,
+      // Thread the converter's warnings and true page count so coverage is
+      // honest (a partially-unreadable document is not shown as 100%) — BLOCKER-2.
+      converterWarnings: outcome.warnings,
+      pagesOrSlides: outcome.pagesOrSlides,
     }, signal);
     return {
       status: response.status,

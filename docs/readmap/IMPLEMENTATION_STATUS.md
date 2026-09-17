@@ -184,6 +184,35 @@ Full details: `docs/readmap/PHASE_1_IMPLEMENTATION_PLAN.md`.
 | 12. Scanned-document honesty | A scanned-like fixture (page 2 yields no blocks + the converter's REAL §36 warning, pinned verbatim) yields PARTIAL_READY with the limitation surfaced, ratio < 1 — never a confident summary | `pipeline.test.ts` (check-12 block) |
 
 Remaining before Phase 1 closure: the E2E check (11) with credentials, then the independent review (`prompts/02_REVIEW_PHASE_1.md`).
+
+### Post-review correction (2026-09-17)
+
+The independent review (`docs/readmap/PHASE_1_REVIEW.md`) returned **PHASE 1
+REJECTED** and showed the acceptance table above overstated readiness. Recorded
+honestly here (HIGH-1):
+
+- **Check 8 (citation resolution)** was scorer/unit-level only. The *real*
+  evidence route was broken (BLOCKER-1: `signals.v1.json` is a bare array but
+  the route read it as `{ signals }`, 500ing every "source" click). **Fixed**
+  and now pinned by a real route test (`lib/readmap/evidence-route.test.ts`).
+- **Check 12 (scanned-document honesty)** passed only because the unit test
+  hand-injected the warning + page count; the *real* client→start→segment path
+  discarded converter warnings and never sent a page count, so coverage was a
+  tautological 100% (BLOCKER-2). **Fixed** (warnings + `pagesOrSlides` now
+  threaded) and pinned by a coverage-invariant test (`pipeline.test.ts`
+  "coverage honesty with a real page count").
+- **Check 11 (E2E)** was later run once for a PDF this session, but the
+  evidence-drawer click was not exercised live — the gap that hid BLOCKER-1.
+  Now covered at the route level; a live end-to-end (incl. a partial-coverage
+  fixture) is still owed before closure.
+- **Check 10 (injection)** proves only that the deterministic *scorer* flags
+  obeying outputs; the real agents' resistance to embedded instructions is still
+  unexercised (open follow-up).
+
+A duplicate/concurrent `start` guard (MEDIUM-2) was also added. Remaining
+non-blocking follow-ups: MEDIUM-1 (segmentation tests pin hand-copied grammar,
+not a real generated fixture), and the review's LOW items. Re-run the
+independent review after these land before treating Phase 1 as accepted.
 | Frontend typecheck | Pass (clean) | 2026-09-13 | `npm run typecheck` |
 | Production build | Not yet run this phase | — | At Phase 1 exit |
 | Python converter suite | Not run — converter unchanged | 2026-09-13 | To run at Phase 1 exit (336 tests) |
